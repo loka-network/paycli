@@ -1,10 +1,11 @@
 package sdk
 
-// Wallet mirrors the agents-pay-service Wallet response object. Only the
-// fields the SDK and CLI actually consume are modeled — the upstream payload
-// contains additional bookkeeping fields that are passed through opaquely
-// when needed.
-type Wallet struct {
+// HostedWallet mirrors the agents-pay-service Wallet response object — i.e.
+// a sub-wallet record on the custodial LNbits side. It is distinct from the
+// node-mode case where the "wallet" lives inside the user's own lnd-sui.
+// Only fields the SDK and CLI consume are modeled; the upstream payload
+// carries additional bookkeeping that callers may inspect via raw JSON.
+type HostedWallet struct {
 	ID          string `json:"id"`
 	User        string `json:"user"`
 	Name        string `json:"name"`
@@ -80,8 +81,10 @@ func (p *Payment) IsPending() bool {
 	return p.Status == "pending" || p.Status == ""
 }
 
-// WalletStatus is the lightweight response from GET /api/v1/wallet (invoice key).
-type WalletStatus struct {
+// HostedWalletStatus is the lightweight response from GET /api/v1/wallet
+// (invoice key). Distinct from HostedWallet which is the full wallet record
+// returned by account/wallet creation.
+type HostedWalletStatus struct {
 	ID      string `json:"id,omitempty"`
 	Name    string `json:"name"`
 	Balance int64  `json:"balance"`

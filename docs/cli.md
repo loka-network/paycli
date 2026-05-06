@@ -2,7 +2,16 @@
 
 `paycli` is a single binary covering the full agent-side payment flow:
 account creation → invoice issuance → invoice settlement → L402-protected
-HTTP requests.
+HTTP requests. Two routes are supported, mutually exclusive per config:
+
+* **`--route hosted`** (default) — talks to `agents-pay-service` via REST
+  + `X-Api-Key`. The custodial / Loka-managed wallet.
+* **`--route node`** — talks directly to a user-run `lnd` / `lnd-sui` REST
+  gateway via TLS + macaroon. The self-custody wallet.
+
+Once configured, every other command (`whoami`, `fund`, `pay`, `request`,
+`history`) dispatches automatically based on the saved route — no flag
+needed on each call.
 
 ## Install
 
@@ -20,38 +29,63 @@ make install         # → $GOBIN/paycli
 | `--config`   | `PAYCLI_CONFIG`   | Override config file path (default `~/.paycli/config.json`) |
 
 The config file is created on `register` and updated by `login`. It stores
-`base_url`, `admin_key`, `invoice_key`, `wallet_id`, and `user_id`.
+`route` plus the route-specific fields: hosted (`base_url`, `admin_key`,
+`invoice_key`, `wallet_id`, `user_id`) or node (`node_endpoint`,
+`node_tls_cert_path`, `node_macaroon_path`).
 
 ## Commands
 
-### `paycli register <wallet-name>`
+### `paycli register [<wallet-name>] [--route hosted|node]`
 
-Create a fresh anonymous account + first wallet via
-`POST /api/v1/account`. Persists keys + user id to the config file.
+**Hosted (default)** — creates a fresh anonymous account + first wallet via
+`POST /api/v1/account`. Persists keys + user id.
 
 ```bash
 paycli --base-url http://127.0.0.1:5002 register "main"
 ```
 
-### `paycli login --admin-key … [--invoice-key …] [--wallet-id …]`
-
-Persist existing keys (e.g., from a separate provisioning step) without
-calling the server.
+**Node** — no remote provisioning step; just pins the connection settings
+and probes `GetInfo` for sanity. Wallet name is optional in this mode.
 
 ```bash
+paycli register --route node \
+    --lnd-endpoint  https://127.0.0.1:8081 \
+    --lnd-tls-cert  /tmp/lnd-sui-test/alice/tls.cert \
+    --lnd-macaroon  /tmp/lnd-sui-test/alice/data/chain/sui/devnet/admin.macaroon
+```
+
+### `paycli login --route hosted|node …`
+
+Persist existing credentials without making a remote call. Useful when
+you've provisioned the wallet/keys elsewhere.
+
+```bash
+# hosted
 paycli login --admin-key 0123abcd... --invoice-key fedcba...
+
+# node
+paycli login --route node \
+    --lnd-endpoint  https://127.0.0.1:8081 \
+    --lnd-tls-cert  /path/to/tls.cert \
+    --lnd-macaroon  /path/to/admin.macaroon
 ```
 
 ### `paycli whoami`
 
-Show the wallet attached to the configured key. Works with either invoice
-or admin key.
+* hosted: `GET /api/v1/wallet` — returns wallet name + balance.
+* node: `GET /v1/getinfo` — returns identity_pubkey, alias, channel counts.
+
+(node-mode `GetInfo` against lnd-sui devnet sometimes errors with the
+chain-backend's pprof page — see `docs/sdk.md#known-issue-with-lnd-sui-devnet`.)
 
 ### `paycli fund --amount N [--memo …] [--unit sat] [--expiry seconds]`
 
 Generate a BOLT11 invoice for receiving funds into the configured wallet.
-The full `Payment` object is printed; the `bolt11` / `payment_request`
-field is what you hand to the payer.
+
+* hosted: `POST /api/v1/payments {out:false, amount:N}` → returns the full
+  hosted `Payment` object including `bolt11`.
+* node: `POST /v1/invoices {value:N, memo, expiry}` → returns the lnd
+  `AddInvoice` response with `payment_request`.
 
 ```bash
 paycli fund --amount 1000 --memo "topup"
@@ -59,7 +93,11 @@ paycli fund --amount 1000 --memo "topup"
 
 ### `paycli pay <bolt11>`
 
-Settle a BOLT11 invoice from the configured wallet. Requires the admin key.
+Settle a BOLT11 invoice from the configured wallet.
+
+* hosted: `POST /api/v1/payments {out:true, bolt11}` — requires admin key.
+* node: `POST /v1/channels/transactions {payment_request}` — synchronous
+  send via the macaroon.
 
 ```bash
 paycli pay lnbc100u1p3...
@@ -82,12 +120,15 @@ HTTP request with automatic L402 (HTTP 402) payment handling.
 Behind the scenes:
 
 1. Build the request from flags.
-2. Send via `sdk.L402Doer`.
+2. Send via `sdk.L402Doer` wired to the active route's wallet.
 3. On 402, parse `WWW-Authenticate: LSAT macaroon="…", invoice="…"`.
-4. Call `POST /api/v1/payments` with the invoice → get preimage.
+4. Pay the invoice via the active route:
+   * hosted → `POST /api/v1/payments {out:true,bolt11}` (admin key).
+   * node → `POST /v1/channels/transactions {payment_request}` (macaroon).
 5. Re-send with `Authorization: LSAT <mac>:<preimage>`.
 
-Requires the admin key (only admin keys can spend).
+Hosted mode requires an admin key (invoice keys can't spend). Node mode
+just needs whatever macaroon is configured — usually `admin.macaroon`.
 
 ```bash
 # Local Prism (self-signed cert, hostregexp routes by Host header):

@@ -24,6 +24,7 @@ import (
 	"crypto/tls"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -44,7 +45,7 @@ func newWalletClient(t *testing.T) *sdk.Client {
 	return sdk.New(url)
 }
 
-func mustCreateAccount(t *testing.T, ctx context.Context) *sdk.Wallet {
+func mustCreateAccount(t *testing.T, ctx context.Context) *sdk.HostedWallet {
 	t.Helper()
 	w, err := newWalletClient(t).CreateAccount(ctx, "paycli-it-"+t.Name())
 	if err != nil {
@@ -110,6 +111,70 @@ func TestCreateInvoice(t *testing.T) {
 		t.Logf("note: server returned non-lnbc invoice prefix: bolt11=%q payment_request=%q",
 			p.Bolt11, p.PaymentRequest)
 	}
+}
+
+// TestNode_AddInvoice_AgainstAlice exercises the NodeClient against Alice's
+// real lnd-sui REST gateway. Skipped unless PAYCLI_IT_NODE_ALICE_DIR is set
+// (e.g. /tmp/lnd-sui-test/alice).
+func TestNode_AddInvoice_AgainstAlice(t *testing.T) {
+	dir := envOr("PAYCLI_IT_NODE_ALICE_DIR", "")
+	if dir == "" {
+		t.Skip("PAYCLI_IT_NODE_ALICE_DIR not set; skipping node mode test")
+	}
+	endpoint := envOr("PAYCLI_IT_NODE_ALICE_REST", "https://127.0.0.1:8081")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	nc, err := sdk.NewNodeClient(endpoint,
+		sdk.WithNodeTLSCertFile(filepath.Join(dir, "tls.cert")),
+		sdk.WithNodeMacaroonFile(filepath.Join(dir, "data/chain/sui/devnet/admin.macaroon")),
+	)
+	if err != nil {
+		t.Fatalf("NewNodeClient: %v", err)
+	}
+
+	// AddInvoice exercises auth + JSON wire format end-to-end. Verified to
+	// work even when the SUI chain backend is in a degraded state where
+	// GetInfo / SendPaymentSync fail.
+	resp, err := nc.AddInvoice(ctx, 1000, "paycli-it-node", 0)
+	if err != nil {
+		t.Fatalf("AddInvoice: %v", err)
+	}
+	if !strings.HasPrefix(resp.PaymentRequest, "lnbc") &&
+		!strings.HasPrefix(resp.PaymentRequest, "lnsui") {
+		t.Errorf("unexpected payment_request prefix: %q", resp.PaymentRequest)
+	}
+	if h := resp.PaymentHashHex(); len(h) != 64 {
+		t.Errorf("PaymentHashHex = %q (len=%d), want 64-char hex", h, len(h))
+	}
+}
+
+// TestNode_ChannelBalance_AgainstAlice verifies a read-only call works
+// against the live node; useful to detect TLS / macaroon misconfiguration.
+func TestNode_ChannelBalance_AgainstAlice(t *testing.T) {
+	dir := envOr("PAYCLI_IT_NODE_ALICE_DIR", "")
+	if dir == "" {
+		t.Skip("PAYCLI_IT_NODE_ALICE_DIR not set; skipping node mode test")
+	}
+	endpoint := envOr("PAYCLI_IT_NODE_ALICE_REST", "https://127.0.0.1:8081")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	nc, err := sdk.NewNodeClient(endpoint,
+		sdk.WithNodeTLSCertFile(filepath.Join(dir, "tls.cert")),
+		sdk.WithNodeMacaroonFile(filepath.Join(dir, "data/chain/sui/devnet/admin.macaroon")),
+	)
+	if err != nil {
+		t.Fatalf("NewNodeClient: %v", err)
+	}
+	bal, err := nc.ChannelBalance(ctx)
+	if err != nil {
+		t.Fatalf("ChannelBalance: %v", err)
+	}
+	t.Logf("Alice channel balance: local=%d sat / %d msat",
+		bal.LocalBalance.SatInt(), bal.LocalBalance.MsatInt())
 }
 
 // TestL402_ChallengeReachable verifies that paycli can reach Prism, decode

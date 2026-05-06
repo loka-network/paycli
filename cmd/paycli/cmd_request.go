@@ -14,12 +14,11 @@ import (
 )
 
 // cmdRequest implements `paycli request <url>` — a curl-style HTTP wrapper that
-// transparently pays L402 challenges using the configured custodial wallet.
+// transparently pays L402 challenges using whichever wallet backend the user
+// has configured (hosted custodial, or their own lnd-sui node).
 //
-// On 402, the SDK's L402Doer parses the LSAT challenge, calls PayInvoice on
-// agents-pay-service, then replays the original request with the
-// `Authorization: LSAT mac:preimage` header. Token reuse is in-process for
-// the lifetime of the command.
+// The L402Doer abstracts over Wallet (interface), so the same code path
+// handles both routes — only the spend backend differs.
 func cmdRequest() *cli.Command {
 	return &cli.Command{
 		Name:      "request",
@@ -41,18 +40,14 @@ func cmdRequest() *cli.Command {
 			if err != nil {
 				return err
 			}
-			// We need admin key to actually pay invoices behind the scenes.
-			cl, err := clientFromConfig(cfg, c.String("base-url"), c.Bool("insecure"), true)
+			wallet, err := walletForCurrentRoute(cfg, c.String("base-url"), "", c.Bool("insecure"))
 			if err != nil {
-				return err
-			}
-			if cl.KeyType != sdk.KeyAdmin {
-				return fail("request: admin key required to auto-pay L402 challenges (run `paycli login --admin-key ...`)")
+				return fail("request: %v", err)
 			}
 
-			doer := sdk.NewL402Doer(cl)
+			doer := sdk.NewL402Doer(wallet)
 			doer.MaxRetries = c.Int("max-retries")
-			if c.Bool("insecure-target") || c.Bool("insecure") {
+			if c.Bool("insecure-target") {
 				doer.HTTPClient = &http.Client{
 					Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}, // #nosec G402 — opt-in for local testing
 					Timeout:   60 * time.Second,

@@ -70,9 +70,13 @@ the `tests/` package:
 | `PAYCLI_IT_LNBITS_URL` | `http://127.0.0.1:5002` | agents-pay-service base URL |
 | `PAYCLI_IT_PRISM_URL` | `https://127.0.0.1:8080` | Prism base URL (skipped if unset) |
 | `PAYCLI_IT_PRISM_TARGET` | `${PAYCLI_IT_PRISM_URL}/` | Specific URL the L402 test calls |
-| `PAYCLI_IT_FUNDED_ADMIN_KEY` | _(unset)_ | Admin key of a pre-funded wallet for full L402 e2e |
+| `PAYCLI_IT_FUNDED_ADMIN_KEY` | _(unset)_ | Admin key of a pre-funded hosted wallet for full L402 e2e |
+| `PAYCLI_IT_NODE_ALICE_DIR` | _(unset)_ | Alice's lnd dir, e.g. `/tmp/lnd-sui-test/alice` (enables node-mode tests) |
+| `PAYCLI_IT_NODE_ALICE_REST` | `https://127.0.0.1:8081` | Alice's REST listener |
 
 ## What the tests cover
+
+**Hosted route (always runs):**
 
 * `TestAccountAndWallet` — creates a fresh account, fetches it back, then
   attempts to add a sub-wallet (skipped silently if the LNbits server has
@@ -82,6 +86,19 @@ the `tests/` package:
 * `TestL402_AgainstPrism` — drives the full L402 path against Prism:
   HTTP request → 402 challenge → SDK calls `PayInvoice` →
   surface result.
+
+**Node route (runs when `PAYCLI_IT_NODE_ALICE_DIR` is set):**
+
+* `TestNode_AddInvoice_AgainstAlice` — builds a `NodeClient` from
+  Alice's tls.cert + admin.macaroon and exercises `AddInvoice` against
+  her live REST gateway.
+* `TestNode_ChannelBalance_AgainstAlice` — read-only sanity check; logs
+  Alice's local channel balance.
+
+`SendPaymentSync` and `GetInfo` are intentionally not covered by
+integration tests because lnd-sui's SUI-RPC layer sometimes returns the
+chain backend's pprof page on those endpoints — that's a backend issue,
+not an SDK issue.
 
   When `PAYCLI_IT_FUNDED_ADMIN_KEY` is unset, the test creates a fresh
   empty wallet and accepts an `Insufficient balance` error from

@@ -2,15 +2,32 @@
 
 Import path: `github.com/loka-network/paycli/pkg/sdk`
 
-The SDK has two surfaces:
+The SDK has three surfaces:
 
-1. **`Client`** — a thin REST wrapper around `agents-pay-service` (LNbits fork).
-2. **`L402Doer`** — an `http.Client` that transparently pays HTTP 402 LSAT
-   challenges using a `Client` as the spending wallet.
+1. **`Client`** — REST wrapper around `agents-pay-service` (LNbits fork).
+   The "hosted" / custodial route.
+2. **`NodeClient`** — REST wrapper around the user's own `lnd` / `lnd-sui`
+   grpc-gateway. The "node" / self-custody route.
+3. **`L402Doer`** — an `http.Client` that transparently pays HTTP 402 LSAT
+   challenges. Takes the `Wallet` interface, so it drives either client.
 
-Everything is pure-stdlib + net/http. No protobuf, no gRPC, no LND build dep.
+Everything is pure stdlib + `net/http`. No protobuf, no gRPC, no lnd build
+dep — `NodeClient` talks to lnd's REST gateway over plain HTTPS.
 
-## Client
+## Picking a route
+
+```go
+// Wallet is satisfied by both Client and NodeClient — anything that
+// can settle a BOLT11 invoice and return a preimage.
+type Wallet interface {
+    PayInvoice(ctx context.Context, bolt11 string) (*Payment, error)
+}
+```
+
+Generic code that pays L402 challenges should accept `sdk.Wallet`, not a
+concrete client.
+
+## Client (hosted route)
 
 ### Construction
 
@@ -30,9 +47,9 @@ Pass an empty `baseURL` to use `sdk.DefaultBaseURL` (`https://agents-pay.loka.ca
 
 | Method | HTTP | Key required |
 |---|---|---|
-| `CreateAccount(ctx, name) (*Wallet, error)` | `POST /api/v1/account` | none |
-| `GetWallet(ctx) (*WalletStatus, error)` | `GET  /api/v1/wallet` | invoice or admin |
-| `CreateWallet(ctx, userID, name) (*Wallet, error)` | `POST /api/v1/wallet?usr=…` | none — uses `usr` query param |
+| `CreateAccount(ctx, name) (*HostedWallet, error)` | `POST /api/v1/account` | none |
+| `GetWallet(ctx) (*HostedWalletStatus, error)` | `GET  /api/v1/wallet` | invoice or admin |
+| `CreateWallet(ctx, userID, name) (*HostedWallet, error)` | `POST /api/v1/wallet?usr=…` | none — uses `usr` query param |
 | `CreateInvoice(ctx, CreateInvoiceRequest) (*Payment, error)` | `POST /api/v1/payments` (out=false) | invoice or admin |
 | `PayInvoice(ctx, bolt11) (*Payment, error)` | `POST /api/v1/payments` (out=true) | **admin** |
 | `ListPayments(ctx, limit, offset) ([]Payment, error)` | `GET /api/v1/payments` | invoice or admin |
@@ -82,6 +99,59 @@ Use `errors.Is` against the sentinels and `errors.As` against `*APIError`.
   `1 amount = 1 MIST`. `Wallet.BalanceMsat` is millisat-equivalent — divide
   by 1000 to get MIST/sat.
 
+## NodeClient (node route)
+
+`NodeClient` talks to an `lnd` / `lnd-sui` grpc-gateway REST endpoint
+directly — no Loka custodial server in the picture.
+
+### Construction
+
+```go
+nc, err := sdk.NewNodeClient(
+    "https://127.0.0.1:8081",
+    sdk.WithNodeTLSCertFile("/tmp/lnd-sui-test/alice/tls.cert"),
+    sdk.WithNodeMacaroonFile("/tmp/lnd-sui-test/alice/data/chain/sui/devnet/admin.macaroon"),
+    // sdk.WithNodeInsecureTLS(),                // alternative — skip TLS verify
+    // sdk.WithNodeMacaroonHex("0201036c6e6402..."), // alternative — pass hex inline
+    // sdk.WithNodeTimeout(60 * time.Second),
+)
+```
+
+The macaroon is read from disk and hex-encoded into the
+`Grpc-Metadata-macaroon` header lnd expects. The TLS cert is loaded into
+a private cert pool; the system roots are *not* consulted (lnd's dev cert
+is self-signed).
+
+### Methods
+
+| Method | HTTP | Returns |
+|---|---|---|
+| `GetInfo(ctx)` | `GET /v1/getinfo` | `*NodeInfo` |
+| `ChannelBalance(ctx)` | `GET /v1/balance/channels` | `*NodeChannelBalance` |
+| `AddInvoice(ctx, value, memo, expiry)` | `POST /v1/invoices` | `*NodeAddInvoiceResponse` |
+| `SendPaymentSync(ctx, bolt11)` | `POST /v1/channels/transactions` | `*NodeSendPaymentResponse` |
+| `PayInvoice(ctx, bolt11)` | (Wallet interface) | `*Payment` (with hex preimage) |
+| `ListPayments(ctx, max)` | `GET /v1/payments` | `[]NodePayment` |
+
+### Wire format quirks
+
+* `r_hash`, `payment_hash`, `payment_preimage` come back **base64-encoded**
+  on the JSON wire (grpc-gateway default for binary fields). The accessors
+  `PaymentHashHex()` / `PreimageHex()` decode and re-encode as lowercase hex.
+* int64 fields (`balance`, `value_sat`, `add_index`) are serialized as
+  decimal strings. `Amount.SatInt()` / `Amount.MsatInt()` parse them.
+* lnd's REST gateway sometimes returns 200 OK with a gRPC error envelope
+  (`{"code":N,"message":"..."}`). `NodeClient.do` detects this and surfaces
+  it as `*APIError` so callers don't get garbage on the success path.
+
+### Known issue with lnd-sui devnet
+
+Some lnd-sui builds return `JSON decode error: ... <html>/debug/pprof/` from
+chain-backend RPCs (`GetInfo`, `WalletBalance`, `SendPaymentSync`) when the
+SUI RPC is in a degraded state. `AddInvoice`, `ChannelBalance`, and
+`ListPayments` typically remain healthy. The SDK surfaces those as
+`*APIError` with the raw body in `.Body` so it's debuggable.
+
 ## L402Doer
 
 `L402Doer` wraps an `http.Client` and pays through any HTTP 402 challenge
@@ -90,9 +160,11 @@ returned by Prism / aperture-style gateways.
 ### Basic usage
 
 ```go
-wallet := sdk.New(baseURL, sdk.WithAdminKey(adminKey))
-doer   := sdk.NewL402Doer(wallet)
+// Either client type works.
+wallet := sdk.New(baseURL, sdk.WithAdminKey(adminKey))   // hosted
+// wallet, _ := sdk.NewNodeClient(host, ...)             // or node
 
+doer := sdk.NewL402Doer(wallet)
 req, _ := http.NewRequest("GET", "https://api.example.com/paid", nil)
 resp, err := doer.Do(ctx, req)
 ```

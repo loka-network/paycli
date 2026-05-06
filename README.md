@@ -1,22 +1,31 @@
 # paycli
 
-Loka Payment custodial wallet CLI + Go SDK. Single binary, single import path,
-HTTP only — no LND build dependency.
+Loka Payment CLI + Go SDK. Single binary, single import path, HTTP-only —
+no LND build dependency.
 
-`paycli` is intentionally separate from `lncli`. Route A (self-custody) users
-already have `lncli` for direct LN node operations. `paycli` covers route B —
-the **custodial** path against `agents-pay-service`, including the L402 / HTTP
-402 auto-payment flow that AI agents need when calling paid APIs behind a
-Prism / aperture gateway.
+paycli supports **two routes** out of one binary:
+
+| Route | Wallet location | Backend |
+|---|---|---|
+| **hosted** | Loka custodial server | `agents-pay-service` REST + `X-Api-Key` |
+| **node** | User's own LN node | `lnd-sui` REST gateway + macaroon |
+
+The same `paycli request` command transparently pays L402 (HTTP 402)
+challenges via whichever route is configured — the L402Doer takes a
+`Wallet` interface and both backends satisfy it.
 
 ```
-┌──────────────┐     X-Api-Key     ┌────────────────────────┐
-│   paycli     │  ───────────────► │  agents-pay-service    │ ──► lnd-sui
-│   (CLI/SDK)  │                   │   (custodial wallet)   │
-└──────────────┘                   └────────────────────────┘
-       │                                      ▲
-       │   L402 challenge / preimage replay   │
-       └──────────────────► Prism ────────────┘
+┌──────────────┐  hosted: X-Api-Key   ┌────────────────────────┐
+│              │  ──────────────────► │  agents-pay-service    │ ──► lnd-sui
+│   paycli     │                      │   (custodial wallet)   │
+│  (CLI/SDK)   │                      └────────────────────────┘
+│              │
+│              │  node: macaroon + TLS  ┌────────────────────────┐
+│              │  ────────────────────► │  lnd-sui REST gateway  │
+└──────────────┘                        └────────────────────────┘
+       │                                       ▲
+       │   L402 challenge / preimage replay    │
+       └──────────────────► Prism ─────────────┘
 ```
 
 ## Layout
@@ -31,6 +40,8 @@ tests/          Build-tag-gated integration tests against a live local stack
 
 ## Quick start
 
+### Hosted route (custodial)
+
 ```bash
 make build                              # → bin/paycli
 bin/paycli --base-url http://127.0.0.1:5002 register "main"
@@ -41,18 +52,40 @@ bin/paycli request -H "Host: service1.com" \
     https://127.0.0.1:8080/freebieservice
 ```
 
-The `register` command persists the returned admin/invoice keys to
-`~/.paycli/config.json` (override with `$PAYCLI_CONFIG`).
+### Node route (self-custody)
+
+```bash
+make build
+bin/paycli register --route node \
+    --lnd-endpoint  https://127.0.0.1:8081 \
+    --lnd-tls-cert  /tmp/lnd-sui-test/alice/tls.cert \
+    --lnd-macaroon  /tmp/lnd-sui-test/alice/data/chain/sui/devnet/admin.macaroon
+bin/paycli whoami
+bin/paycli fund --amount 1000 --memo "node-mode invoice"
+bin/paycli request -H "Host: service1.com" --insecure-target -i \
+    https://127.0.0.1:8080/freebieservice    # same command, different backend
+```
+
+Config lives at `~/.paycli/config.json` (override with `$PAYCLI_CONFIG`).
+Switching routes is just `paycli login --route ...` — config remembers
+which one is active.
 
 ## SDK usage
 
 ```go
 import "github.com/loka-network/paycli/pkg/sdk"
 
-cl := sdk.New("http://127.0.0.1:5002", sdk.WithAdminKey(adminKey))
-inv, _ := cl.CreateInvoice(ctx, sdk.CreateInvoiceRequest{Amount: 1000})
+// Hosted route
+hosted := sdk.New("http://127.0.0.1:5002", sdk.WithAdminKey(adminKey))
 
-doer := sdk.NewL402Doer(cl)
+// Node route — talks to the user's own lnd-sui REST gateway
+node, _ := sdk.NewNodeClient("https://127.0.0.1:8081",
+    sdk.WithNodeTLSCertFile("/path/to/tls.cert"),
+    sdk.WithNodeMacaroonFile("/path/to/admin.macaroon"),
+)
+
+// L402Doer takes anything that satisfies sdk.Wallet — both clients do.
+doer := sdk.NewL402Doer(node) // or hosted
 req, _ := http.NewRequest("GET", "https://api.example.com/paid", nil)
 resp, _ := doer.Do(ctx, req) // 402 → pay → retry, transparent
 ```

@@ -10,17 +10,42 @@ import (
 	"github.com/loka-network/paycli/pkg/sdk"
 )
 
-// Config is what we persist at ~/.paycli/config.json. The schema is intentionally
-// flat because there is currently only one supported route (custodial). When a
-// route A (self-custody / lncli) integration is added, this file will gain a
-// routes object and a default_route selector — see docs/cli.md.
+// Route enumerates the two custody models paycli supports today. They are
+// mutually exclusive per config — a user picks one at `register` / `login`
+// time and every subsequent command dispatches against it.
+type Route string
+
+const (
+	RouteHosted Route = "hosted" // custodial: agents-pay-service over REST
+	RouteNode   Route = "node"   // self-custody: the user's own lnd / lnd-sui REST gateway
+)
+
+// Config is what we persist at ~/.paycli/config.json. Fields are grouped by
+// route — the irrelevant set is empty when the other route is active.
 type Config struct {
-	BaseURL  string `json:"base_url"`
+	Route    Route  `json:"route,omitempty"` // "" → defaults to hosted
+	Insecure bool   `json:"insecure_tls,omitempty"`
+
+	// Hosted (agents-pay-service) ----------------------------------------
+	BaseURL  string `json:"base_url,omitempty"`
 	AdminKey string `json:"admin_key,omitempty"`
 	InKey    string `json:"invoice_key,omitempty"`
 	WalletID string `json:"wallet_id,omitempty"`
 	UserID   string `json:"user_id,omitempty"`
-	Insecure bool   `json:"insecure_tls,omitempty"`
+
+	// Node (lnd-sui REST gateway) ---------------------------------------
+	NodeEndpoint    string `json:"node_endpoint,omitempty"`     // https://127.0.0.1:8081
+	NodeTLSCertPath string `json:"node_tls_cert_path,omitempty"`
+	NodeMacaroonPath string `json:"node_macaroon_path,omitempty"`
+}
+
+// EffectiveRoute resolves the route, defaulting to hosted when unset (so
+// configs written by older paycli builds keep working).
+func (c *Config) EffectiveRoute() Route {
+	if c.Route == "" {
+		return RouteHosted
+	}
+	return c.Route
 }
 
 // configPath returns the resolved path to the config file, honoring
@@ -70,10 +95,14 @@ func saveConfig(c *Config) error {
 	return os.WriteFile(p, b, 0o600)
 }
 
-// clientFromConfig builds an SDK client from the persisted config + CLI flag
-// overrides. preferAdmin=true selects the admin key when both are present
-// (needed for spending operations).
-func clientFromConfig(cfg *Config, baseURLOverride string, insecureOverride bool, preferAdmin bool) (*sdk.Client, error) {
+// hostedClientFromConfig builds an SDK Client for the hosted route. preferAdmin
+// selects the admin key when both are present (needed for spending operations).
+//
+// Returns an error if the active route is not "hosted".
+func hostedClientFromConfig(cfg *Config, baseURLOverride string, insecureOverride bool, preferAdmin bool) (*sdk.Client, error) {
+	if cfg.EffectiveRoute() != RouteHosted {
+		return nil, fmt.Errorf("active route is %q, this command requires --route hosted", cfg.EffectiveRoute())
+	}
 	baseURL := cfg.BaseURL
 	if baseURLOverride != "" {
 		baseURL = baseURLOverride
@@ -96,4 +125,53 @@ func clientFromConfig(cfg *Config, baseURLOverride string, insecureOverride bool
 	}
 
 	return sdk.New(baseURL, opts...), nil
+}
+
+// nodeClientFromConfig builds an SDK NodeClient for the node route.
+func nodeClientFromConfig(cfg *Config, endpointOverride string, insecureOverride bool) (*sdk.NodeClient, error) {
+	if cfg.EffectiveRoute() != RouteNode {
+		return nil, fmt.Errorf("active route is %q, this command requires --route node", cfg.EffectiveRoute())
+	}
+	endpoint := cfg.NodeEndpoint
+	if endpointOverride != "" {
+		endpoint = endpointOverride
+	}
+	if endpoint == "" {
+		return nil, errors.New("node endpoint not configured (run `paycli login --route node --lnd-endpoint ...`)")
+	}
+	if cfg.NodeMacaroonPath == "" {
+		return nil, errors.New("node macaroon path not configured")
+	}
+
+	opts := []sdk.NodeOption{
+		sdk.WithNodeMacaroonFile(cfg.NodeMacaroonPath),
+	}
+	switch {
+	case insecureOverride || cfg.Insecure:
+		opts = append(opts, sdk.WithNodeInsecureTLS())
+	case cfg.NodeTLSCertPath != "":
+		opts = append(opts, sdk.WithNodeTLSCertFile(cfg.NodeTLSCertPath))
+	}
+	return sdk.NewNodeClient(endpoint, opts...)
+}
+
+// walletForCurrentRoute returns whichever client implements sdk.Wallet for
+// the active route. Used by the `request` command so the L402 doer doesn't
+// care which backend is in play.
+func walletForCurrentRoute(cfg *Config, baseURLOverride, endpointOverride string, insecureOverride bool) (sdk.Wallet, error) {
+	switch cfg.EffectiveRoute() {
+	case RouteHosted:
+		cl, err := hostedClientFromConfig(cfg, baseURLOverride, insecureOverride, true)
+		if err != nil {
+			return nil, err
+		}
+		if cl.KeyType != sdk.KeyAdmin {
+			return nil, errors.New("admin key required to auto-pay L402 challenges (run `paycli login --admin-key ...`)")
+		}
+		return cl, nil
+	case RouteNode:
+		return nodeClientFromConfig(cfg, endpointOverride, insecureOverride)
+	default:
+		return nil, fmt.Errorf("unsupported route %q", cfg.EffectiveRoute())
+	}
 }

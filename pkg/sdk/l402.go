@@ -113,6 +113,9 @@ func (tc *TokenCache) Delete(key string) {
 // returns 402, Doer parses the LSAT challenge, asks the wallet to pay the
 // invoice, and retries the request with the resulting Authorization header.
 //
+// Wallet is anything that can settle a BOLT11 invoice — the hosted Client
+// (agents-pay-service) and NodeClient (lnd-sui REST) both satisfy it.
+//
 // MaxRetries bounds how many 402 cycles a single Do call may execute.
 // Default is 1 (one challenge, one retry). Increase only if a service is
 // known to rotate macaroons mid-call.
@@ -121,7 +124,7 @@ func (tc *TokenCache) Delete(key string) {
 // outgoing requests so paid endpoints don't trigger a new payment per call.
 type L402Doer struct {
 	HTTPClient *http.Client
-	Wallet     *Client
+	Wallet     Wallet
 	Cache      *TokenCache
 	MaxRetries int
 
@@ -131,11 +134,14 @@ type L402Doer struct {
 	CacheKey func(*http.Request) string
 }
 
-// NewL402Doer returns a Doer wired to the given wallet client. The HTTP
-// client and cache are initialized with sane defaults.
-func NewL402Doer(wallet *Client) *L402Doer {
+// NewL402Doer returns a Doer wired to the given wallet. Pass either a
+// hosted *Client or a *NodeClient — both satisfy the Wallet interface.
+//
+// The HTTPClient is left zero so the doer falls back to http.DefaultClient.
+// Callers targeting local Prism with a self-signed cert should set their
+// own HTTPClient with InsecureSkipVerify (see docs/sdk.md).
+func NewL402Doer(wallet Wallet) *L402Doer {
 	return &L402Doer{
-		HTTPClient: wallet.HTTPClient,
 		Wallet:     wallet,
 		Cache:      NewTokenCache(),
 		MaxRetries: 1,

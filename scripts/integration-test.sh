@@ -28,10 +28,17 @@ cd "$(dirname "$0")/.."
 : "${PAYCLI_IT_PRISM_URL:=https://127.0.0.1:8080}"
 : "${PAYCLI_IT_PRISM_TARGET:=${PAYCLI_IT_PRISM_URL}/}"
 
-export PAYCLI_IT_LNBITS_URL PAYCLI_IT_PRISM_URL PAYCLI_IT_PRISM_TARGET
+# Node-mode tests are opt-in. Auto-enable if Alice's dev dir exists.
+if [ -z "${PAYCLI_IT_NODE_ALICE_DIR:-}" ] && [ -d /tmp/lnd-sui-test/alice ]; then
+    PAYCLI_IT_NODE_ALICE_DIR=/tmp/lnd-sui-test/alice
+fi
 
-echo "[paycli-it] LNbits = $PAYCLI_IT_LNBITS_URL"
-echo "[paycli-it] Prism  = $PAYCLI_IT_PRISM_URL"
+export PAYCLI_IT_LNBITS_URL PAYCLI_IT_PRISM_URL PAYCLI_IT_PRISM_TARGET
+export PAYCLI_IT_NODE_ALICE_DIR PAYCLI_IT_NODE_ALICE_REST
+
+echo "[paycli-it] LNbits     = $PAYCLI_IT_LNBITS_URL"
+echo "[paycli-it] Prism      = $PAYCLI_IT_PRISM_URL"
+echo "[paycli-it] Node (Alice) = ${PAYCLI_IT_NODE_ALICE_DIR:-unset (skipped)}"
 
 # Sanity check: agents-pay-service reachable.
 if ! curl -fsS "${PAYCLI_IT_LNBITS_URL%/}/api/v1/health" >/dev/null 2>&1; then

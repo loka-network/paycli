@@ -110,9 +110,9 @@ func New(baseURL string, opts ...Option) *Client {
 // No API key is required for this call.
 //
 // POST /api/v1/account
-func (c *Client) CreateAccount(ctx context.Context, name string) (*Wallet, error) {
+func (c *Client) CreateAccount(ctx context.Context, name string) (*HostedWallet, error) {
 	body := CreateAccountRequest{Name: name}
-	var w Wallet
+	var w HostedWallet
 	if err := c.do(ctx, http.MethodPost, "/api/v1/account", body, &w, false); err != nil {
 		return nil, err
 	}
@@ -130,13 +130,13 @@ func (c *Client) CreateAccount(ctx context.Context, name string) (*Wallet, error
 // account-creation time.
 //
 // POST /api/v1/wallet?usr={userID}
-func (c *Client) CreateWallet(ctx context.Context, userID, name string) (*Wallet, error) {
+func (c *Client) CreateWallet(ctx context.Context, userID, name string) (*HostedWallet, error) {
 	if userID == "" {
 		return nil, fmt.Errorf("paycli: CreateWallet requires userID")
 	}
 	body := CreateWalletRequest{Name: name}
 	path := "/api/v1/wallet?usr=" + url.QueryEscape(userID)
-	var w Wallet
+	var w HostedWallet
 	// withAuth=false: this endpoint does not consume X-Api-Key.
 	if err := c.do(ctx, http.MethodPost, path, body, &w, false); err != nil {
 		return nil, err
@@ -148,8 +148,8 @@ func (c *Client) CreateWallet(ctx context.Context, userID, name string) (*Wallet
 // Works with either invoice or admin key, but admin sees more fields.
 //
 // GET /api/v1/wallet
-func (c *Client) GetWallet(ctx context.Context) (*WalletStatus, error) {
-	var w WalletStatus
+func (c *Client) GetWallet(ctx context.Context) (*HostedWalletStatus, error) {
+	var w HostedWalletStatus
 	if err := c.do(ctx, http.MethodGet, "/api/v1/wallet", nil, &w, true); err != nil {
 		return nil, err
 	}
