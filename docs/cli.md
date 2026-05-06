@@ -144,6 +144,29 @@ Exchange super-user / admin credentials for a JWT and cache it in the
 config. Required before `paycli topup`. Password may be supplied via
 `--password` or read interactively from the tty.
 
+### `paycli admin-set <key> <value>` (operator)
+
+PATCH a single field on `agents-pay-service`'s admin settings via
+`PATCH /admin/api/v1/settings`. The value is JSON-parsed when possible
+(so `true` / `42` / `"str"` / `["a","b"]` round-trip), otherwise sent
+as a plain string.
+
+Most common use: enable LND self-payment so a wallet can pay invoices
+issued by the same lnd it's funded from (e.g. paying a Prism paywall
+that's authenticated by the same node):
+
+```bash
+paycli auth-login --username admin                       # one-time
+paycli admin-set lnd_grpc_allow_self_payment true        # persists to DB
+pkill -f 'lnbits --port 5002' && lnbits --port 5002 &    # restart so the
+                                                         # wallet driver
+                                                         # picks up the flag
+```
+
+Note: env vars like `LND_GRPC_ALLOW_SELF_PAYMENT=true` look like they
+should work but are silently overridden at boot — lnbits' admin-DB
+contents shadow editable env values. Use `admin-set` instead.
+
 ### `paycli topup --wallet-id … --amount N` (operator)
 
 Credit a hosted wallet directly (faucet) via

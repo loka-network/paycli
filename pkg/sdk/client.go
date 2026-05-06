@@ -113,6 +113,17 @@ func LoginWithPassword(ctx context.Context, baseURL, username, password string, 
 	return out.AccessToken, nil
 }
 
+// AdminPatchSettings PATCHes /admin/api/v1/settings with a partial dict
+// of fields to update. Requires a super-user JWT (LoginWithPassword).
+//
+// Use this to flip server-level toggles like lnd_grpc_allow_self_payment
+// without going through the dashboard. The body is merged on the server
+// side — only the keys you pass are touched.
+func AdminPatchSettings(ctx context.Context, baseURL, bearerToken string, partial map[string]interface{}, opts ...Option) error {
+	c := New(baseURL, opts...)
+	return c.doWithBearer(ctx, http.MethodPatch, "/admin/api/v1/settings", partial, nil, bearerToken)
+}
+
 // AdminCreditWallet credits (or debits, with negative amount) a wallet via
 // PUT /users/api/v1/balance. Requires a super-user JWT — see
 // LoginWithPassword.

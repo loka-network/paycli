@@ -1,13 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"syscall"
 
 	"github.com/loka-network/paycli/pkg/sdk"
 	"github.com/urfave/cli/v2"
 	"golang.org/x/term"
-	"syscall"
 )
 
 // cmdTopup is the operator-side faucet for hosted wallets. It calls
@@ -56,6 +57,61 @@ func cmdTopup() *cli.Command {
 				return fail("topup: %v", err)
 			}
 			fmt.Printf("credited %d to wallet %s\n", c.Int64("amount"), c.String("wallet-id"))
+			return nil
+		},
+	}
+}
+
+// cmdAdminSet PATCHes a single key on agents-pay-service's admin settings.
+// The value is parsed as JSON when possible (so `true`, `123`, `"str"`,
+// `["a","b"]` all round-trip correctly); otherwise it's sent as a plain
+// string.
+//
+// Most useful for operator tweaks like enabling self-payment:
+//
+//   paycli admin-set lnd_grpc_allow_self_payment true
+//
+// Requires a super-user JWT cached via `paycli auth-login`.
+func cmdAdminSet() *cli.Command {
+	return &cli.Command{
+		Name:      "admin-set",
+		Usage:     "PATCH a single field on the agents-pay-service admin settings (operator only)",
+		ArgsUsage: "<key> <value>",
+		Action: func(c *cli.Context) error {
+			if c.NArg() < 2 {
+				return fail("admin-set: <key> and <value> are required")
+			}
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			if cfg.AdminBearerToken == "" {
+				return fail("admin-set: no super-user token cached — run `paycli auth-login --username <name>` first")
+			}
+			baseURL := cfg.BaseURL
+			if v := c.String("base-url"); v != "" {
+				baseURL = v
+			}
+			if baseURL == "" {
+				baseURL = sdk.DefaultBaseURL
+			}
+			opts := []sdk.Option{}
+			if c.Bool("insecure") || cfg.Insecure {
+				opts = append(opts, sdk.WithInsecureTLS())
+			}
+			key, raw := c.Args().Get(0), c.Args().Get(1)
+			// Try JSON first (true/false/numbers/quoted-strings/arrays).
+			// Fall back to a plain string so `paycli admin-set foo bar`
+			// works without quoting.
+			var val interface{}
+			if err := json.Unmarshal([]byte(raw), &val); err != nil {
+				val = raw
+			}
+			body := map[string]interface{}{key: val}
+			if err := sdk.AdminPatchSettings(c.Context, baseURL, cfg.AdminBearerToken, body, opts...); err != nil {
+				return fail("admin-set: %v", err)
+			}
+			fmt.Printf("set %s = %v\n", key, val)
 			return nil
 		},
 	}

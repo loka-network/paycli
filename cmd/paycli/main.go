@@ -52,6 +52,7 @@ func main() {
 			cmdServices(),
 			cmdAuthLogin(),
 			cmdTopup(),
+			cmdAdminSet(),
 		},
 	}
 
