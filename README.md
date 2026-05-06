@@ -90,7 +90,10 @@ req, _ := http.NewRequest("GET", "https://api.example.com/paid", nil)
 resp, _ := doer.Do(ctx, req) // 402 → pay → retry, transparent
 ```
 
-See [`docs/sdk.md`](docs/sdk.md) and [`docs/cli.md`](docs/cli.md) for full reference.
+See [`docs/sdk.md`](docs/sdk.md) and [`docs/cli.md`](docs/cli.md) for full
+reference. For a step-by-step end-to-end verification (build, bring up
+the local stack from scratch, run both routes, observe wallet balance
+deltas), follow [`docs/manual-test.md`](docs/manual-test.md).
 
 ## Tests
 
