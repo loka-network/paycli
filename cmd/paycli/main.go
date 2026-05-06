@@ -48,6 +48,10 @@ func main() {
 			cmdRequest(),
 			cmdHistory(),
 			cmdAddWallet(),
+			cmdConfig(),
+			cmdServices(),
+			cmdAuthLogin(),
+			cmdTopup(),
 		},
 	}
 

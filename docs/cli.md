@@ -107,6 +107,53 @@ paycli pay lnbc100u1p3...
 
 List recent payments on the configured wallet.
 
+### `paycli config show [--reveal] [--path]`
+
+Print the active config. Secrets (admin key, invoice key, bearer token)
+are masked unless `--reveal` is passed. `--path` prints just the resolved
+config file path.
+
+### `paycli config get <key>` / `paycli config set <key> <value>`
+
+Edit a single config field without hand-touching JSON. Run
+`paycli config keys` for the full list of editable keys.
+
+```bash
+paycli config set base_url http://127.0.0.1:5002
+paycli config set route node
+paycli config get node_endpoint
+```
+
+### `paycli services --prism-url … --prism-macaroon … [-s X] [--insecure]`
+
+List the L402 service catalog from a Prism gateway. The underlying
+`GET /api/admin/services` is admin-gated by Prism today, so this command
+takes the gateway operator's `admin.macaroon`. With `--search`,
+case-insensitive substring filter on name/host/path.
+
+```bash
+paycli services \
+    --prism-url       https://127.0.0.1:8080 \
+    --prism-macaroon  /path/to/prism/.prism/admin.macaroon \
+    --insecure
+```
+
+### `paycli auth-login --username … [--password …]` (operator)
+
+Exchange super-user / admin credentials for a JWT and cache it in the
+config. Required before `paycli topup`. Password may be supplied via
+`--password` or read interactively from the tty.
+
+### `paycli topup --wallet-id … --amount N` (operator)
+
+Credit a hosted wallet directly (faucet) via
+`PUT /users/api/v1/balance`. Bypasses LN routing — internally
+agents-pay-service synthesizes a successful incoming payment, the same
+way the dashboard "credit user" button does. Use to onboard test
+wallets without round-tripping through a channel.
+
+Negative `--amount` debits the wallet.
+
 ### `paycli add-wallet <name> [--user-id …]`
 
 Create an additional sub-wallet. Defaults to the user_id cached by `register`.

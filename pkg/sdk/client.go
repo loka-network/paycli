@@ -90,6 +90,103 @@ func WithUserAgent(ua string) Option {
 	return func(c *Client) { c.UserAgent = ua }
 }
 
+// LoginWithPassword exchanges (username, password) for a JWT bearer token via
+// POST /api/v1/auth. The returned token authenticates super-user / admin
+// operations like topup that aren't available behind X-Api-Key.
+//
+// On success, the function does NOT persist the token on the Client — that's
+// the caller's responsibility (the CLI saves it to config). Use BearerToken
+// to inject it on subsequent requests.
+func LoginWithPassword(ctx context.Context, baseURL, username, password string, opts ...Option) (string, error) {
+	c := New(baseURL, opts...)
+	body := map[string]string{"username": username, "password": password}
+	var out struct {
+		AccessToken string `json:"access_token"`
+		TokenType   string `json:"token_type"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/api/v1/auth", body, &out, false); err != nil {
+		return "", err
+	}
+	if out.AccessToken == "" {
+		return "", fmt.Errorf("paycli: auth: empty access_token")
+	}
+	return out.AccessToken, nil
+}
+
+// AdminCreditWallet credits (or debits, with negative amount) a wallet via
+// PUT /users/api/v1/balance. Requires a super-user JWT — see
+// LoginWithPassword.
+//
+// This is the "faucet" path on the agents-pay-service: it bypasses LN routing
+// and synthesizes a successful internal payment on the target wallet, which
+// is exactly how the dashboard "credit user" action works under the hood.
+func AdminCreditWallet(ctx context.Context, baseURL, bearerToken, walletID string, amount int64, opts ...Option) error {
+	c := New(baseURL, opts...)
+	body := map[string]interface{}{"id": walletID, "amount": amount}
+	return c.doWithBearer(ctx, http.MethodPut, "/users/api/v1/balance", body, nil, bearerToken)
+}
+
+// doWithBearer is a one-shot variant of do that sends Authorization: Bearer ...
+// instead of X-Api-Key. Kept private so the package's public surface stays
+// X-Api-Key-centric for the common (per-wallet) case.
+func (c *Client) doWithBearer(ctx context.Context, method, path string, body, out interface{}, token string) error {
+	saved := c.APIKey
+	c.APIKey = ""
+	defer func() { c.APIKey = saved }()
+
+	rdr, err := jsonReader(body)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, rdr)
+	if err != nil {
+		return fmt.Errorf("paycli: build request: %w", err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", c.UserAgent)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("paycli: http: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("paycli: read body: %w", err)
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		return ErrUnauthorized
+	}
+	if resp.StatusCode >= 300 {
+		apiErr := &APIError{Status: resp.StatusCode, Body: string(respBody)}
+		var detail struct {
+			Detail string `json:"detail"`
+		}
+		_ = json.Unmarshal(respBody, &detail)
+		apiErr.Detail = detail.Detail
+		return apiErr
+	}
+	if out != nil && len(respBody) > 0 {
+		return json.Unmarshal(respBody, out)
+	}
+	return nil
+}
+
+func jsonReader(body interface{}) (io.Reader, error) {
+	if body == nil {
+		return nil, nil
+	}
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("paycli: marshal body: %w", err)
+	}
+	return bytes.NewReader(buf), nil
+}
+
 // New constructs a Client. baseURL may be empty to use DefaultBaseURL.
 func New(baseURL string, opts ...Option) *Client {
 	if baseURL == "" {

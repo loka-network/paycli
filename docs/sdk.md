@@ -152,6 +152,40 @@ SUI RPC is in a degraded state. `AddInvoice`, `ChannelBalance`, and
 `ListPayments` typically remain healthy. The SDK surfaces those as
 `*APIError` with the raw body in `.Body` so it's debuggable.
 
+## PrismClient (service catalog)
+
+`PrismClient` calls Prism's admin gRPC-gateway REST. Today the only
+endpoint the SDK exposes is `ListServices`; the rest of the admin
+surface (CreateService, RevokeToken, stats) is intentionally out of
+scope — those are operator dashboard concerns.
+
+```go
+pc, _ := sdk.NewPrismClient(
+    "https://127.0.0.1:8080",
+    sdk.WithPrismMacaroonFile("/path/to/prism/.prism/admin.macaroon"),
+    sdk.WithPrismInsecureTLS(),
+)
+services, _ := pc.ListServices(ctx)
+for _, s := range services {
+    fmt.Println(s.Name, s.HostRegexp, s.Price)
+}
+```
+
+## Operator helpers (auth + topup)
+
+Two free functions for super-user / operator flows that aren't tied to
+a per-wallet API key:
+
+```go
+// Login as super user → JWT
+tok, _ := sdk.LoginWithPassword(ctx, baseURL, "admin", "secret")
+
+// Credit a wallet directly (synthesizes an "Admin credit" internal payment)
+_ = sdk.AdminCreditWallet(ctx, baseURL, tok, walletID, 50000)
+```
+
+Negative amounts debit; LNbits enforces no-overdraft.
+
 ## L402Doer
 
 `L402Doer` wraps an `http.Client` and pays through any HTTP 402 challenge

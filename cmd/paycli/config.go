@@ -27,11 +27,15 @@ type Config struct {
 	Insecure bool   `json:"insecure_tls,omitempty"`
 
 	// Hosted (agents-pay-service) ----------------------------------------
-	BaseURL  string `json:"base_url,omitempty"`
-	AdminKey string `json:"admin_key,omitempty"`
-	InKey    string `json:"invoice_key,omitempty"`
-	WalletID string `json:"wallet_id,omitempty"`
-	UserID   string `json:"user_id,omitempty"`
+	BaseURL          string `json:"base_url,omitempty"`
+	AdminKey         string `json:"admin_key,omitempty"`
+	InKey            string `json:"invoice_key,omitempty"`
+	WalletID         string `json:"wallet_id,omitempty"`
+	UserID           string `json:"user_id,omitempty"`
+	// AdminBearerToken is the super-user / admin JWT cached by `auth-login`,
+	// used only by `paycli topup`. Distinct from AdminKey (which is a
+	// per-wallet X-Api-Key, not an account-level token).
+	AdminBearerToken string `json:"admin_bearer_token,omitempty"`
 
 	// Node (lnd-sui REST gateway) ---------------------------------------
 	NodeEndpoint    string `json:"node_endpoint,omitempty"`     // https://127.0.0.1:8081
