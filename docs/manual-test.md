@@ -314,32 +314,42 @@ Workarounds:
 - **Existing install path**: use `paycli admin-set <key> <value>`
   (which PATCHes `/admin/api/v1/settings`) to update the DB row.
 
-### lnd-sui self-payment doesn't complete on this devnet
+### lnd-sui self-payment requires `--allow-circular-route` + two channels
 
 When the same lnd both issues an invoice and pays it (the exact case for
-`paycli (Alice) → service1 (Alice authenticator)`), `SendPaymentV2`
-returns `IN_FLIGHT` and never resolves to `SUCCEEDED` — the corresponding
-invoice stays `OPEN`. lnbits' wallet driver returns "pending" with an
-empty preimage, so the L402Doer correctly refuses to fabricate an LSAT
-token. The wallet balance is still optimistically debited because lnbits
-treats `IN_FLIGHT` as not-yet-failed.
+`paycli (Alice) → service1 (Alice authenticator)`), `SendPaymentV2` is a
+self-payment. Two upstream-lnd preconditions must be met:
 
-This is an **lnd-sui upstream behavior**, not a paycli or lnbits bug.
-Standard lnd handles self-payments via a routing short-circuit; the
-SUI chain-backend integration apparently doesn't wire that path through
-to the payment-completion state machine.
+1. lnd is started with `--allow-circular-route`. Without it,
+   `htlcswitch.go:1161` rejects the return hop with
+   `OutgoingFailureCircularRoute → TemporaryChannelFailure` and the
+   payment fails with `FAILURE_REASON_NO_ROUTE` before any HTLC is
+   attempted.
 
-For e2e testing always use a **cross-wallet** route — service2 in this
-playbook (Alice paywall, Bob backend) is the canonical hosted-route
-e2e, and the node route (Bob → service1 = Alice) covers the other
-direction.
+2. There are TWO channels between alice and bob. With one channel,
+   `getOutgoingBalance` reports `insufficient_balance` even with raw
+   capacity available, because the same channel's balance is consumed
+   on both hops of the cycle.
 
-### Bob's `payinvoice --force` via the lnd CLI hangs
+Both are now wired into `lnd/scripts/itest_sui_single_coin.sh`:
+`--allow-circular-route` is passed to both alice and bob, and step
+[5b/8] opens a second alice → bob channel. Step [8/8] of the itest
+script asserts a successful Alice → Alice payment with a non-zero
+preimage, so this stays regression-tested.
 
-The `lncli payinvoice` flow stays on `IN_FLIGHT` because of the same
-chain-backend issue when used against the lnd-sui REST gateway under
-some chain states. The REST `POST /v1/channels/transactions` path used
-in this guide works reliably on a fresh `itest_sui_single_coin.sh`
-restart and is the recommended way to fund hosted wallets from Bob.
+For paycli's hosted route, this means an Alice-funded wallet *can*
+pay a service whose payment backend is also Alice (e.g.
+`paycli request -H "Host: service1.com"`) once
+`lnd_grpc_allow_self_payment=true` is also set in agents-pay-service
+(via `paycli admin-set lnd_grpc_allow_self_payment true`).
+
+### Bob's `payinvoice --force` via the lnd CLI sometimes hangs
+
+`lncli payinvoice` against the lnd-sui REST gateway can stall on
+`IN_FLIGHT` when the SUI chain RPC has drifted (see § "When SUI chain
+RPC drifts"). The REST `POST /v1/channels/transactions` path used
+throughout this guide works reliably on a fresh
+`itest_sui_single_coin.sh` restart and is the recommended way to fund
+hosted wallets from Bob.
 
 If REST also stalls, the SUI localnet has drifted — restart per § 2.
