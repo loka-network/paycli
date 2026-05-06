@@ -1,0 +1,285 @@
+// Package sdk is a Go client for the Loka Payment custodial wallet
+// (agents-pay-service / LNbits fork) plus an L402 helper for paying HTTP 402
+// challenges issued by Prism / aperture-style gateways.
+//
+// The SDK is intentionally thin: one HTTP client, plain types, and a small
+// L402 state machine. It has no opinions about config storage or CLI UX —
+// those live in cmd/paycli on top of this package.
+package sdk
+
+import (
+	"bytes"
+	"context"
+	"crypto/tls"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// DefaultBaseURL is the hosted Loka Payment endpoint. Override per Client
+// for self-hosted deployments.
+const DefaultBaseURL = "https://agents-pay.loka.cash"
+
+// KeyType identifies which API key the client is using. Most read-only and
+// receive-only operations work with an invoice key; paying invoices and
+// creating wallets require an admin key.
+type KeyType int
+
+const (
+	// KeyUnknown means no key is set (account creation flow).
+	KeyUnknown KeyType = iota
+	// KeyInvoice gives read + receive permissions.
+	KeyInvoice
+	// KeyAdmin gives full spend authority over the wallet.
+	KeyAdmin
+)
+
+// Client is a thread-safe REST client for agents-pay-service.
+type Client struct {
+	BaseURL    string
+	APIKey     string
+	KeyType    KeyType
+	HTTPClient *http.Client
+	UserAgent  string
+}
+
+// Option configures a Client at construction time.
+type Option func(*Client)
+
+// WithAdminKey sets an admin-scoped X-Api-Key on the client.
+func WithAdminKey(k string) Option {
+	return func(c *Client) {
+		c.APIKey = k
+		c.KeyType = KeyAdmin
+	}
+}
+
+// WithInvoiceKey sets an invoice-scoped X-Api-Key on the client.
+func WithInvoiceKey(k string) Option {
+	return func(c *Client) {
+		c.APIKey = k
+		c.KeyType = KeyInvoice
+	}
+}
+
+// WithHTTPClient swaps the underlying http.Client. Useful for tests or for
+// disabling TLS verification when targeting local Prism deployments with
+// self-signed certs.
+func WithHTTPClient(h *http.Client) Option {
+	return func(c *Client) { c.HTTPClient = h }
+}
+
+// WithInsecureTLS disables TLS verification on the underlying client. Only
+// safe for local integration testing — never enable against production.
+func WithInsecureTLS() Option {
+	return func(c *Client) {
+		tr := &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // #nosec G402 — opt-in for local testing
+		}
+		c.HTTPClient = &http.Client{Transport: tr, Timeout: 30 * time.Second}
+	}
+}
+
+// WithUserAgent customizes the User-Agent header sent on every request.
+func WithUserAgent(ua string) Option {
+	return func(c *Client) { c.UserAgent = ua }
+}
+
+// New constructs a Client. baseURL may be empty to use DefaultBaseURL.
+func New(baseURL string, opts ...Option) *Client {
+	if baseURL == "" {
+		baseURL = DefaultBaseURL
+	}
+	c := &Client{
+		BaseURL:    strings.TrimRight(baseURL, "/"),
+		HTTPClient: &http.Client{Timeout: 30 * time.Second},
+		UserAgent:  "paycli-sdk/0.1",
+	}
+	for _, o := range opts {
+		o(c)
+	}
+	return c
+}
+
+// CreateAccount provisions a fresh anonymous user + first wallet.
+// No API key is required for this call.
+//
+// POST /api/v1/account
+func (c *Client) CreateAccount(ctx context.Context, name string) (*Wallet, error) {
+	body := CreateAccountRequest{Name: name}
+	var w Wallet
+	if err := c.do(ctx, http.MethodPost, "/api/v1/account", body, &w, false); err != nil {
+		return nil, err
+	}
+	return &w, nil
+}
+
+// CreateWallet adds a sub-wallet under the account identified by userID.
+// userID is the `user` field returned by CreateAccount (the LNbits account
+// id, not a wallet id).
+//
+// LNbits' POST /api/v1/wallet does NOT accept X-Api-Key — it requires either
+// a session JWT or, when the server has user_id_only auth enabled, a
+// `?usr=<user_id>` query parameter. The SDK uses the latter because that's
+// what's available to callers who only persisted the admin key + user id at
+// account-creation time.
+//
+// POST /api/v1/wallet?usr={userID}
+func (c *Client) CreateWallet(ctx context.Context, userID, name string) (*Wallet, error) {
+	if userID == "" {
+		return nil, fmt.Errorf("paycli: CreateWallet requires userID")
+	}
+	body := CreateWalletRequest{Name: name}
+	path := "/api/v1/wallet?usr=" + url.QueryEscape(userID)
+	var w Wallet
+	// withAuth=false: this endpoint does not consume X-Api-Key.
+	if err := c.do(ctx, http.MethodPost, path, body, &w, false); err != nil {
+		return nil, err
+	}
+	return &w, nil
+}
+
+// GetWallet returns the wallet referenced by the configured API key.
+// Works with either invoice or admin key, but admin sees more fields.
+//
+// GET /api/v1/wallet
+func (c *Client) GetWallet(ctx context.Context) (*WalletStatus, error) {
+	var w WalletStatus
+	if err := c.do(ctx, http.MethodGet, "/api/v1/wallet", nil, &w, true); err != nil {
+		return nil, err
+	}
+	return &w, nil
+}
+
+// CreateInvoice generates a BOLT11 payment_request bound to the configured
+// wallet. Either key type is accepted by the upstream API.
+//
+// POST /api/v1/payments  with Out=false
+func (c *Client) CreateInvoice(ctx context.Context, req CreateInvoiceRequest) (*Payment, error) {
+	req.Out = false
+	if req.Unit == "" {
+		req.Unit = "sat"
+	}
+	var p Payment
+	if err := c.do(ctx, http.MethodPost, "/api/v1/payments", req, &p, true); err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// PayInvoice settles an external or internal BOLT11 invoice from the
+// configured wallet. Requires an admin key.
+//
+// POST /api/v1/payments  with Out=true
+func (c *Client) PayInvoice(ctx context.Context, bolt11 string) (*Payment, error) {
+	if c.KeyType != KeyAdmin {
+		return nil, ErrAdminKeyRequired
+	}
+	body := PayInvoiceRequest{Out: true, Bolt11: bolt11}
+	var p Payment
+	if err := c.do(ctx, http.MethodPost, "/api/v1/payments", body, &p, true); err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// ListPayments returns payments for the configured wallet. Pass 0 limit/offset
+// to use server defaults.
+//
+// GET /api/v1/payments
+func (c *Client) ListPayments(ctx context.Context, limit, offset int) ([]Payment, error) {
+	q := url.Values{}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if offset > 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
+	path := "/api/v1/payments"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	var ps []Payment
+	if err := c.do(ctx, http.MethodGet, path, nil, &ps, true); err != nil {
+		return nil, err
+	}
+	return ps, nil
+}
+
+// GetPayment returns the status of a single payment by hash. Works without
+// an API key (fewer fields), or with the wallet's key for full detail.
+//
+// GET /api/v1/payments/{payment_hash}
+func (c *Client) GetPayment(ctx context.Context, paymentHash string) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	auth := c.APIKey != ""
+	if err := c.do(ctx, http.MethodGet, "/api/v1/payments/"+paymentHash, nil, &out, auth); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// do is the single HTTP entry point. It serializes JSON, sets headers,
+// inspects the response, and unmarshals on success.
+func (c *Client) do(ctx context.Context, method, path string, body, out interface{}, withAuth bool) error {
+	var rdr io.Reader
+	if body != nil {
+		buf, err := json.Marshal(body)
+		if err != nil {
+			return fmt.Errorf("paycli: marshal body: %w", err)
+		}
+		rdr = bytes.NewReader(buf)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, rdr)
+	if err != nil {
+		return fmt.Errorf("paycli: build request: %w", err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", c.UserAgent)
+	if withAuth {
+		if c.APIKey == "" {
+			return ErrUnauthorized
+		}
+		req.Header.Set("X-Api-Key", c.APIKey)
+	}
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("paycli: http: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("paycli: read body: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return ErrUnauthorized
+	}
+	if resp.StatusCode >= 300 {
+		apiErr := &APIError{Status: resp.StatusCode, Body: string(respBody)}
+		var detail struct {
+			Detail string `json:"detail"`
+		}
+		_ = json.Unmarshal(respBody, &detail)
+		apiErr.Detail = detail.Detail
+		return apiErr
+	}
+
+	if out == nil || len(respBody) == 0 {
+		return nil
+	}
+	if err := json.Unmarshal(respBody, out); err != nil {
+		return fmt.Errorf("paycli: decode response: %w", err)
+	}
+	return nil
+}
