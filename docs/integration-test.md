@@ -107,6 +107,99 @@ not an SDK issue.
   topped up (e.g. via a `bob payinvoice` of a `paycli fund` invoice) for
   a true end-to-end pay-and-replay assertion.
 
+## Verified end-to-end flows
+
+These sequences have been run against the local stack and confirmed
+to settle real Lightning payments. Use them as smoke tests when you
+want to convince yourself the full chain is healthy.
+
+### Hosted route — paycli paying through agents-pay-service
+
+```bash
+# 1. fresh wallet via paycli
+paycli --base-url http://127.0.0.1:5002 register "h-test"
+
+# 2. mint a fund invoice and have Bob pay it via REST (proves Bob's
+#    SUI chain backend is healthy — see "When SUI chain RPC drifts" below)
+INV=$(paycli fund --amount 100000000 --memo topup | jq -r .bolt11)
+curl -ks --cacert /tmp/lnd-sui-test/bob/tls.cert \
+    -X POST https://127.0.0.1:8082/v1/channels/transactions \
+    -H "Grpc-Metadata-macaroon: $(xxd -ps -u -c 1000 /tmp/lnd-sui-test/bob/data/chain/sui/devnet/admin.macaroon)" \
+    -d "{\"payment_request\":\"$INV\"}"
+
+# 3. drive an L402 request. Use a service whose payment backend is NOT the
+#    same lnd as agents-pay-service's funding source — otherwise lnd will
+#    refuse with "self-payments not allowed".
+paycli request --insecure-target \
+    -H "Host: merchant-bob.local" -i \
+    https://127.0.0.1:8080/freebieservice
+# Expected: HTTP 200 from the backend (or 404 if no path), wallet balance
+# decreased by 10M sat (service2's price = 10000000 MIST).
+```
+
+### Node route — paycli driving the user's own lnd-sui
+
+```bash
+# 1. point paycli at Bob's REST gateway
+paycli register --route node \
+    --lnd-endpoint  https://127.0.0.1:8082 \
+    --lnd-tls-cert  /tmp/lnd-sui-test/bob/tls.cert \
+    --lnd-macaroon  /tmp/lnd-sui-test/bob/data/chain/sui/devnet/admin.macaroon
+
+# 2. drive L402 — same command as hosted, dispatches by saved route.
+#    Bob has 5 SUI in the channel, well above service prices.
+paycli request --insecure-target -H "Host: service1.com" -i \
+    https://127.0.0.1:8080/freebieservice
+# Expected: HTTP 200 / 404 from backend, Bob's channel local_balance
+# decreased by ~10M sat.
+```
+
+## When SUI chain RPC drifts (the pprof page error)
+
+Symptom on chain-touching REST calls (`/v1/getinfo`,
+`/v1/balance/blockchain`, `/v1/channels/transactions`) — lnd returns:
+
+```
+{"code":2,"message":"unable to get best block info: JSON decode error:
+ invalid character '<' ... <html>...debug/pprof/..."}
+```
+
+What's happening: lnd-sui's chain client is hitting the SUI JSON-RPC
+on port 9000, but the SUI process has degraded into a state where
+**every HTTP request 303-redirects to `/debug/pprof`**. lnd treats
+the HTML body as JSON and surfaces this nested error.
+
+Channel-only RPCs (`/v1/balance/channels`, `/v1/invoices`,
+`/v1/payments`) keep working because they don't query chain state —
+that's why `paycli fund` and `paycli history` may keep working even
+when `paycli pay` and `paycli whoami` are broken.
+
+Fix: full restart of the integration stack.
+
+```bash
+# 1. kill the existing itest process (or its child lnd/sui)
+kill -INT <itest_pid>
+
+# 2. restart with non-closing stdin so the script's final `read -p ""`
+#    doesn't immediately exit when stdin EOFs:
+( cd /path/to/lnd && \
+    ./scripts/itest_sui_single_coin.sh localnet \
+        < <(while true; do sleep 3600; done) \
+        > /tmp/itest.log 2>&1 ) &
+
+# 3. restart prism + agents-pay-service so they reconnect with the
+#    newly-generated macaroons (paths stay the same, contents change):
+pkill -f "prism --configfile|aperture --configfile"
+pkill -f "lnbits --port 5002"
+( cd /path/to/loka-prism-l402 && \
+    ./prism --configfile=./sample-conf-tmp.yaml < /dev/null > /tmp/prism.log 2>&1 ) &
+( cd /path/to/agents-pay-service && \
+    ./.venv/bin/lnbits --port 5002 < /dev/null > /tmp/lnbits.log 2>&1 ) &
+```
+
+After restart, `curl https://127.0.0.1:8081/v1/getinfo` should return a
+real `block_height` instead of the pprof body.
+
 ## Funding a wallet for full e2e
 
 ```bash
