@@ -132,6 +132,16 @@ type L402Doer struct {
 	// the token cache. Defaults to scheme://host/path (path included so
 	// distinct services on the same host get distinct entries).
 	CacheKey func(*http.Request) string
+
+	// OnPaid is fired exactly once per successful 402 → pay → retry cycle,
+	// AFTER the wallet returned a non-empty preimage. Use this to write
+	// audit logs or metrics from the caller. Called inline; runs on the
+	// same goroutine as Do, so keep it cheap (no network calls).
+	//
+	// `req` is the original request the caller passed in (unmodified URL
+	// + Host); `ch` is the parsed L402 challenge; `paid` is the Wallet's
+	// Payment response with Preimage populated.
+	OnPaid func(req *http.Request, ch *Challenge, paid *Payment)
 }
 
 // NewL402Doer returns a Doer wired to the given wallet. Pass either a
@@ -213,6 +223,12 @@ func (d *L402Doer) Do(ctx context.Context, req *http.Request) (*http.Response, e
 		}
 		if paid.Preimage == "" {
 			return nil, fmt.Errorf("%w: server returned empty preimage", ErrPaymentFailed)
+		}
+
+		// Notify caller (audit log / metrics) before mutating the request.
+		// Errors in the callback are the caller's problem; we don't catch.
+		if d.OnPaid != nil {
+			d.OnPaid(req, ch, paid)
 		}
 
 		// Cache and attach the new token, then replay the request.

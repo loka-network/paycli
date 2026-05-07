@@ -54,8 +54,26 @@ func cmdTopup() *cli.Command {
 			}
 			if err := sdk.AdminCreditWallet(c.Context, baseURL, cfg.Hosted.AdminBearerToken,
 				c.String("wallet-id"), c.Int64("amount"), opts...); err != nil {
+				LogEvent(Event{
+					Event:    EventTopupCredit,
+					Route:    string(RouteHosted),
+					Endpoint: baseURL,
+					WalletID: c.String("wallet-id"),
+					Amount:   c.Int64("amount"),
+					Status:   "failed",
+					Error:    err.Error(),
+				})
 				return fail("topup: %v", err)
 			}
+			LogEvent(Event{
+				Event:    EventTopupCredit,
+				Route:    string(RouteHosted),
+				Endpoint: baseURL,
+				WalletID: c.String("wallet-id"),
+				Amount:   c.Int64("amount"),
+				Unit:     "sat",
+				Status:   "success",
+			})
 			fmt.Printf("credited %d to wallet %s\n", c.Int64("amount"), c.String("wallet-id"))
 			return nil
 		},

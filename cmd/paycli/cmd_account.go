@@ -66,6 +66,14 @@ func cmdRegister() *cli.Command {
 				if err := saveConfig(cfg); err != nil {
 					return fail("save config: %v", err)
 				}
+				LogEvent(Event{
+					Event:    EventAccountCreated,
+					Route:    string(RouteHosted),
+					Endpoint: cfg.Hosted.BaseURL,
+					WalletID: w.ID,
+					UserID:   w.User,
+					Memo:     w.Name,
+				})
 				return printJSON(w)
 
 			case RouteNode:

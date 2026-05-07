@@ -53,6 +53,31 @@ func cmdRequest() *cli.Command {
 					Timeout:   60 * time.Second,
 				}
 			}
+			// Audit each L402 settlement. Fires inside doer.Do once per
+			// 402 → pay → retry cycle, after a preimage was returned.
+			doer.OnPaid = func(r *http.Request, ch *sdk.Challenge, paid *sdk.Payment) {
+				targetURL := r.URL.String()
+				targetHost := r.Host
+				if targetHost == "" {
+					targetHost = r.URL.Host
+				}
+				// Best-effort amount: parse the bolt11 prefix to grab a
+				// human-friendly value. The wallet's returned Payment may
+				// not carry a normalized Amount (hosted/node disagree on
+				// units), but the invoice itself is canonical.
+				LogEvent(Event{
+					Event:       EventL402Paid,
+					Route:       string(cfg.EffectiveRoute()),
+					PaymentHash: paid.PaymentHash,
+					Preimage:    paid.Preimage,
+					Status:      paid.Status,
+					TargetURL:   targetURL,
+					TargetHost:  targetHost,
+					// Embed the bolt11 in payment_request so operators can
+					// reconstruct the amount and routing detail externally.
+					PaymentRequest: ch.Invoice,
+				})
+			}
 
 			var body io.Reader
 			if d := c.String("data"); d != "" {

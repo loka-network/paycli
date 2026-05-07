@@ -172,6 +172,39 @@ Exchange super-user / admin credentials for a JWT and cache it in the
 config. Required before `paycli topup`. Password may be supplied via
 `--password` or read interactively from the tty.
 
+### `paycli events [-n N] [-t TYPE] [-r ROUTE] [-s RFC3339] [--json] [--path]`
+
+Show the local payment event log at `~/.paycli/events.jsonl`. Every
+state-changing payment command — `register` (hosted), `fund`, `pay`,
+`request` (per L402 settlement), `topup` — appends one structured row
+to this file as it runs.
+
+```bash
+paycli events                                    # last 20, human-readable
+paycli events -n 100 -t l402_paid                # last 100 L402 settlements
+paycli events -r hosted -s 2026-05-07T00:00:00Z  # hosted-route events from today
+paycli events --json | jq                        # raw JSONL for tooling
+paycli events --path                             # just print the log path
+```
+
+Set `PAYCLI_EVENT_LOG=off` (or `0` / `false`) to disable logging
+entirely, or set it to a file path to redirect.
+
+The schema fields:
+
+| Field | Notes |
+|---|---|
+| `ts` | RFC3339Nano UTC |
+| `event` | `account_created` \| `invoice_created` \| `pay_sent` \| `l402_paid` \| `topup_credit` |
+| `route` | `hosted` or `node` |
+| `endpoint` | base_url (hosted) or lnd REST URL (node) |
+| `wallet_id`, `user_id` | populated when known |
+| `amount`, `unit` | positive = inflow, negative = outflow |
+| `payment_hash`, `preimage`, `status` | settlement detail |
+| `target_url`, `target_host` | L402-only: where the request went |
+| `payment_request` | bolt11 (for invoice_created and l402_paid) |
+| `error` | populated on failure |
+
 ### `paycli admin-set <key> <value>` (operator)
 
 PATCH a single field on `agents-pay-service`'s admin settings via
