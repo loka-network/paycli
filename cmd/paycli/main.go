@@ -60,6 +60,7 @@ func main() {
 			cmdAdminSet(),
 			cmdEvents(),
 			cmdRate(),
+			cmdPaymentStatus(),
 		},
 	}
 

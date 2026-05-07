@@ -317,6 +317,34 @@ The schema fields:
 | `payment_request` | bolt11 (for invoice_created and l402_paid) |
 | `error` | populated on failure |
 
+### `paycli payment-status <hash> [--wallet …] [--json]`
+
+Refresh + print one payment's current state. Hits
+`GET /api/v1/payments/{hash}` on agents-pay-service, which forces
+lnbits' wallet driver to re-query the underlying lnd before answering.
+Useful when a previous fund / pay / request returned `status=pending`
+and you want the latest LN-level truth without grepping curl.
+
+```bash
+$ paycli payment-status 93a6642ff4e67795...
+hash:     93a6642ff4e67795860f059f1d43b1523a2bf6967434bcabe76a4df33f6ff159
+paid:     false
+status:   pending
+memo:     L402
+amount:   -10000000000 msat
+```
+
+`paid` reflects LN settlement (preimage revealed); `status` mirrors
+lnbits' apipayments table (pending → success/failed once the wallet
+driver sees the underlying lnd's terminal state).
+
+When a payment stays stuck on `pending` indefinitely, that's the
+lnd-sui devnet caveat documented in `docs/manual-test.md` —
+SendPaymentV2's state machine doesn't always flip IN_FLIGHT →
+SUCCEEDED/FAILED on this fork. The wallet balance has been
+optimistically pre-debited; if lnd eventually reports FAILED the
+balance gets refunded automatically.
+
 ### `paycli rate [<currency=USD>]`
 
 Hits `GET /api/v1/rate/<currency>` on agents-pay-service and prints
