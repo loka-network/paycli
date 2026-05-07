@@ -8,7 +8,7 @@ import (
 func cmdFund() *cli.Command {
 	return &cli.Command{
 		Name:  "fund",
-		Usage: "Generate a BOLT11 invoice to receive funds into this wallet",
+		Usage: "Generate a BOLT11 invoice to receive funds into the active wallet",
 		Flags: []cli.Flag{
 			&cli.Int64Flag{Name: "amount", Aliases: []string{"a"}, Required: true, Usage: "amount in wallet base unit (sat or MIST)"},
 			&cli.StringFlag{Name: "memo", Aliases: []string{"m"}, Usage: "human-readable memo"},
@@ -22,7 +22,7 @@ func cmdFund() *cli.Command {
 			}
 			switch cfg.EffectiveRoute() {
 			case RouteHosted:
-				cl, err := hostedClientFromConfig(cfg, c.String("base-url"), c.Bool("insecure"), false)
+				cl, walletAlias, err := hostedClientFromConfig(cfg, c.String("base-url"), c.Bool("insecure"), false, c.String("wallet"))
 				if err != nil {
 					return err
 				}
@@ -35,16 +35,17 @@ func cmdFund() *cli.Command {
 				if err != nil {
 					return fail("fund: %v", err)
 				}
+				_, w, _ := cfg.Hosted.ResolveWallet(walletAlias)
 				LogEvent(Event{
 					Event:          EventInvoiceCreated,
 					Route:          string(RouteHosted),
 					Endpoint:       cl.BaseURL,
-					WalletID:       cfg.Hosted.WalletID,
+					WalletID:       w.WalletID,
 					UserID:         cfg.Hosted.UserID,
 					Amount:         c.Int64("amount"),
 					Unit:           c.String("unit"),
 					PaymentHash:    p.PaymentHash,
-					Memo:           c.String("memo"),
+					Memo:           c.String("memo") + " [wallet=" + walletAlias + "]",
 					PaymentRequest: pickNonEmpty(p.Bolt11, p.PaymentRequest),
 				})
 				return printJSON(p)
@@ -62,7 +63,7 @@ func cmdFund() *cli.Command {
 					Route:          string(RouteNode),
 					Endpoint:       nc.Endpoint,
 					Amount:         c.Int64("amount"),
-					Unit:           "sat", // lnd always denominates in sats
+					Unit:           "sat",
 					PaymentHash:    resp.PaymentHashHex(),
 					Memo:           c.String("memo"),
 					PaymentRequest: resp.PaymentRequest,
@@ -77,7 +78,7 @@ func cmdFund() *cli.Command {
 func cmdPay() *cli.Command {
 	return &cli.Command{
 		Name:      "pay",
-		Usage:     "Pay a BOLT11 invoice from this wallet",
+		Usage:     "Pay a BOLT11 invoice from the active wallet",
 		ArgsUsage: "<bolt11>",
 		Action: func(c *cli.Context) error {
 			if c.NArg() < 1 {
@@ -90,17 +91,18 @@ func cmdPay() *cli.Command {
 			bolt11 := c.Args().First()
 			switch cfg.EffectiveRoute() {
 			case RouteHosted:
-				cl, err := hostedClientFromConfig(cfg, c.String("base-url"), c.Bool("insecure"), true)
+				cl, walletAlias, err := hostedClientFromConfig(cfg, c.String("base-url"), c.Bool("insecure"), true, c.String("wallet"))
 				if err != nil {
 					return err
 				}
+				_, w, _ := cfg.Hosted.ResolveWallet(walletAlias)
 				p, err := cl.PayInvoice(c.Context, bolt11)
 				if err != nil {
 					LogEvent(Event{
 						Event:    EventPaySent,
 						Route:    string(RouteHosted),
 						Endpoint: cl.BaseURL,
-						WalletID: cfg.Hosted.WalletID,
+						WalletID: w.WalletID,
 						Status:   "failed",
 						Error:    err.Error(),
 					})
@@ -110,12 +112,13 @@ func cmdPay() *cli.Command {
 					Event:       EventPaySent,
 					Route:       string(RouteHosted),
 					Endpoint:    cl.BaseURL,
-					WalletID:    cfg.Hosted.WalletID,
-					Amount:      -absInt64(p.Amount), // outflow
+					WalletID:    w.WalletID,
+					Amount:      -absInt64(p.Amount),
 					Unit:        "msat",
 					PaymentHash: p.PaymentHash,
 					Preimage:    p.Preimage,
 					Status:      p.Status,
+					Memo:        "wallet=" + walletAlias,
 				})
 				return printJSON(p)
 			case RouteNode:
@@ -158,7 +161,7 @@ func cmdPay() *cli.Command {
 func cmdHistory() *cli.Command {
 	return &cli.Command{
 		Name:  "history",
-		Usage: "List recent payments on this wallet",
+		Usage: "List recent payments on the active wallet",
 		Flags: []cli.Flag{
 			&cli.IntFlag{Name: "limit", Value: 20},
 			&cli.IntFlag{Name: "offset"},
@@ -170,7 +173,7 @@ func cmdHistory() *cli.Command {
 			}
 			switch cfg.EffectiveRoute() {
 			case RouteHosted:
-				cl, err := hostedClientFromConfig(cfg, c.String("base-url"), c.Bool("insecure"), false)
+				cl, _, err := hostedClientFromConfig(cfg, c.String("base-url"), c.Bool("insecure"), false, c.String("wallet"))
 				if err != nil {
 					return err
 				}

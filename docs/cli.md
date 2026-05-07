@@ -28,8 +28,61 @@ make install         # → $GOBIN/paycli
 | `--insecure` | `PAYCLI_INSECURE` | Skip TLS verification on the wallet endpoint |
 | `--config`   | `PAYCLI_CONFIG`   | Override config file path (default `~/.paycli/config.json`) |
 
-The config file is created on `register` and updated by `login`. It stores
-`route` plus two route-specific sub-objects:
+## Multi-wallet model (hosted route)
+
+paycli mirrors LNbits' real domain shape: **one user account, many
+sub-wallets**. The account holds the dashboard-login identity (username +
+password) and a JWT for operator-scope ops. Each sub-wallet has its own
+admin / invoice X-Api-Keys an agent talks to agents-pay-service with.
+
+Typical setup:
+
+```bash
+# 1. user registers themselves (creates "default" wallet under their account)
+paycli --base-url http://127.0.0.1:5002 \
+    register --username alice --password "alice-pw" "main"
+
+# 2. user provisions one wallet per agent
+paycli wallets add agent_research
+paycli wallets add agent_trading
+paycli wallets add agent_freebie
+
+# 3. user (in dashboard) sees: main, agent_research, agent_trading, agent_freebie
+
+# 4. each agent gets ONE wallet's keys — export a subset of the config
+#    or just hand over wallet_id + admin_key as env vars
+paycli wallets show agent_research --reveal
+```
+
+`config.json` lives at:
+
+```json
+{
+  "route": "hosted",
+  "hosted": {
+    "base_url": "https://...",
+    "username": "alice",
+    "user_id": "...",
+    "admin_bearer_token": "<JWT>",
+    "active_wallet": "agent_research",
+    "wallets": {
+      "default":         { "wallet_id": "...", "admin_key": "...", "invoice_key": "..." },
+      "agent_research":  { "wallet_id": "...", "admin_key": "...", "invoice_key": "..." },
+      "agent_trading":   { "wallet_id": "...", "admin_key": "...", "invoice_key": "..." }
+    }
+  }
+}
+```
+
+Selecting which wallet a command uses:
+
+| | how to pick |
+|---|---|
+| default for every command | `paycli wallets use <name>` (sets `hosted.active_wallet`) |
+| one-off override | `paycli --wallet <name> fund …` (or env `PAYCLI_WALLET=<name>`) |
+
+The config file is created on `register` and updated by `login` /
+`wallets`. It stores `route` plus two route-specific sub-objects:
 
 ```json
 {
@@ -272,11 +325,26 @@ wallets without round-tripping through a channel.
 
 Negative `--amount` debits the wallet.
 
-### `paycli add-wallet <name> [--user-id …]`
+### `paycli wallets list | add | use | show | remove`
 
-Create an additional sub-wallet. Defaults to the user_id cached by `register`.
-Note: the upstream LNbits server must have `user_id_only` enabled in
-`LNBITS_AUTH_METHODS` for this to work.
+The `wallets` group manages the local map of sub-wallets the active
+account knows about. See § "Multi-wallet model" above for the
+end-to-end shape.
+
+```bash
+paycli wallets list                        # show all entries (active marked *)
+paycli wallets add <alias> [--use]         # create on server + persist locally
+paycli wallets use <alias>                 # switch active_wallet
+paycli wallets show [<alias>] [--reveal]   # print one entry's keys
+paycli wallets remove <alias>              # drop from local config (no server delete)
+```
+
+`wallets add` calls `POST /api/v1/wallet` with the cached super-user
+JWT — set up via `paycli register --username` or `paycli auth-login`.
+The new wallet's keys are auto-saved into `hosted.wallets[<alias>]`.
+
+`wallets show` masks keys by default; pass `--reveal` to print plaintext
+when you need to copy them into an agent's environment.
 
 ### `paycli request <url> [--method GET] [-H 'Key: Value'] [-d body] [-i] [--insecure-target] [--max-retries 1]`
 

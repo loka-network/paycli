@@ -164,6 +164,25 @@ func ListWalletsByBearer(ctx context.Context, baseURL, bearerToken string, opts 
 	return out, nil
 }
 
+// CreateWalletByBearer adds a sub-wallet under the account identified by
+// the bearer JWT via POST /api/v1/wallet (the route's auth dependency
+// is check_account_id_exists, which honors Authorization: Bearer in
+// addition to the ?usr= query param).
+//
+// This is the route paycli uses to provision per-agent wallets after
+// `register --username`: the JWT is what the user already has cached,
+// and Bearer works regardless of whether the server has the
+// user_id_only auth method enabled.
+func CreateWalletByBearer(ctx context.Context, baseURL, bearerToken, name string, opts ...Option) (*HostedWallet, error) {
+	c := New(baseURL, opts...)
+	body := CreateWalletRequest{Name: name}
+	var w HostedWallet
+	if err := c.doWithBearer(ctx, http.MethodPost, "/api/v1/wallet", body, &w, bearerToken); err != nil {
+		return nil, err
+	}
+	return &w, nil
+}
+
 // AdminPatchSettings PATCHes /admin/api/v1/settings with a partial dict
 // of fields to update. Requires a super-user JWT (LoginWithPassword).
 //

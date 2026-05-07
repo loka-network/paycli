@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -53,38 +54,78 @@ var configFields = map[string]configField{
 	},
 
 	// Hosted route -------------------------------------------------------
+	// Account-level fields (one per config) live as plain dotted keys.
+	// Per-wallet fields are managed via `paycli wallets` — `config get`
+	// can read them via the synthetic `hosted.active.*` shortcut below.
 	"hosted.base_url": {
 		get:  func(c *Config) string { return c.Hosted.BaseURL },
 		set:  func(c *Config, v string) error { c.Hosted.BaseURL = v; return nil },
 		help: "[hosted] agents-pay-service base URL, e.g. https://agents-pay.loka.cash",
 	},
-	"hosted.admin_key": {
-		get:    func(c *Config) string { return c.Hosted.AdminKey },
-		set:    func(c *Config, v string) error { c.Hosted.AdminKey = v; return nil },
-		secret: true,
-		help:   "[hosted] wallet admin key (X-Api-Key, full spend authority)",
-	},
-	"hosted.invoice_key": {
-		get:    func(c *Config) string { return c.Hosted.InvoiceKey },
-		set:    func(c *Config, v string) error { c.Hosted.InvoiceKey = v; return nil },
-		secret: true,
-		help:   "[hosted] wallet invoice key (X-Api-Key, receive-only)",
-	},
-	"hosted.wallet_id": {
-		get:  func(c *Config) string { return c.Hosted.WalletID },
-		set:  func(c *Config, v string) error { c.Hosted.WalletID = v; return nil },
-		help: "[hosted] wallet id",
+	"hosted.username": {
+		get:  func(c *Config) string { return c.Hosted.Username },
+		set:  func(c *Config, v string) error { c.Hosted.Username = v; return nil },
+		help: "[hosted] account username (lnbits dashboard login)",
 	},
 	"hosted.user_id": {
 		get:  func(c *Config) string { return c.Hosted.UserID },
 		set:  func(c *Config, v string) error { c.Hosted.UserID = v; return nil },
-		help: "[hosted] account id (used by add-wallet)",
+		help: "[hosted] account id",
 	},
 	"hosted.admin_bearer_token": {
 		get:    func(c *Config) string { return c.Hosted.AdminBearerToken },
 		set:    func(c *Config, v string) error { c.Hosted.AdminBearerToken = v; return nil },
 		secret: true,
-		help:   "[hosted] super-user JWT cached by `auth-login` (used by topup, admin-set)",
+		help:   "[hosted] super-user JWT cached by `auth-login` / `register --username` (used by topup, admin-set, wallets add)",
+	},
+	"hosted.active_wallet": {
+		get: func(c *Config) string { return c.Hosted.ActiveWallet },
+		set: func(c *Config, v string) error {
+			if _, ok := c.Hosted.Wallets[v]; !ok && v != "" {
+				return fmt.Errorf("no wallet named %q in hosted.wallets (run `paycli wallets list`)", v)
+			}
+			c.Hosted.ActiveWallet = v
+			return nil
+		},
+		help: "[hosted] alias of the wallet paycli targets by default",
+	},
+	// Synthetic accessors for the active wallet's per-wallet fields, so
+	// users don't need to open the JSON to read keys. Set via
+	// `paycli wallets add` / `paycli login`, not `config set`.
+	"hosted.active.admin_key": {
+		get: func(c *Config) string {
+			_, w, err := c.Hosted.ResolveWallet("")
+			if err != nil {
+				return ""
+			}
+			return w.AdminKey
+		},
+		set:    func(c *Config, v string) error { return errors.New("read-only — use `paycli login --admin-key …` or `wallets add`") },
+		secret: true,
+		help:   "[hosted] active wallet's admin key (read-only shortcut)",
+	},
+	"hosted.active.invoice_key": {
+		get: func(c *Config) string {
+			_, w, err := c.Hosted.ResolveWallet("")
+			if err != nil {
+				return ""
+			}
+			return w.InvoiceKey
+		},
+		set:    func(c *Config, v string) error { return errors.New("read-only — use `paycli login --invoice-key …` or `wallets add`") },
+		secret: true,
+		help:   "[hosted] active wallet's invoice key (read-only shortcut)",
+	},
+	"hosted.active.wallet_id": {
+		get: func(c *Config) string {
+			_, w, err := c.Hosted.ResolveWallet("")
+			if err != nil {
+				return ""
+			}
+			return w.WalletID
+		},
+		set:  func(c *Config, v string) error { return errors.New("read-only — set via `paycli wallets add` or `paycli login`") },
+		help: "[hosted] active wallet's id (read-only shortcut)",
 	},
 
 	// Node route ---------------------------------------------------------
@@ -110,8 +151,9 @@ var configFields = map[string]configField{
 // layout the user sees on disk.
 var configKeyOrder = []string{
 	"route", "insecure_tls",
-	"hosted.base_url", "hosted.admin_key", "hosted.invoice_key",
-	"hosted.wallet_id", "hosted.user_id", "hosted.admin_bearer_token",
+	"hosted.base_url", "hosted.username", "hosted.user_id",
+	"hosted.admin_bearer_token", "hosted.active_wallet",
+	"hosted.active.wallet_id", "hosted.active.admin_key", "hosted.active.invoice_key",
 	"node.endpoint", "node.tls_cert_path", "node.macaroon_path",
 }
 

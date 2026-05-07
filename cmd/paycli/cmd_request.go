@@ -40,7 +40,7 @@ func cmdRequest() *cli.Command {
 			if err != nil {
 				return err
 			}
-			wallet, err := walletForCurrentRoute(cfg, c.String("base-url"), "", c.Bool("insecure"))
+			wallet, err := walletForCurrentRoute(cfg, c.String("base-url"), "", c.Bool("insecure"), c.String("wallet"))
 			if err != nil {
 				return fail("request: %v", err)
 			}

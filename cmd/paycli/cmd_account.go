@@ -92,10 +92,15 @@ func cmdRegister() *cli.Command {
 				if err != nil {
 					return fail("register: %v", err)
 				}
-				cfg.Hosted.AdminKey = w.AdminKey
-				cfg.Hosted.InvoiceKey = w.InvoiceKey
-				cfg.Hosted.WalletID = w.ID
 				cfg.Hosted.UserID = w.User
+				// Anonymous register has no JWT and no concept of multiple
+				// wallets — store the single auto-created wallet under the
+				// "default" alias.
+				cfg.Hosted.PutWallet("default", WalletEntry{
+					WalletID:   w.ID,
+					AdminKey:   w.AdminKey,
+					InvoiceKey: w.InvoiceKey,
+				})
 				if err := saveConfig(cfg); err != nil {
 					return fail("save config: %v", err)
 				}
@@ -105,7 +110,7 @@ func cmdRegister() *cli.Command {
 					Endpoint: cfg.Hosted.BaseURL,
 					WalletID: w.ID,
 					UserID:   w.User,
-					Memo:     w.Name,
+					Memo:     "anonymous wallet=" + w.Name,
 				})
 				return printJSON(w)
 
@@ -150,7 +155,8 @@ func cmdLogin() *cli.Command {
 			&cli.StringFlag{Name: "admin-key", Usage: "[hosted] wallet admin key"},
 			&cli.StringFlag{Name: "invoice-key", Usage: "[hosted] wallet invoice key"},
 			&cli.StringFlag{Name: "wallet-id", Usage: "[hosted] wallet id (optional)"},
-			&cli.StringFlag{Name: "user-id", Usage: "[hosted] account id (optional, needed for add-wallet)"},
+			&cli.StringFlag{Name: "wallet-name", Value: "default", Usage: "[hosted] alias to store the wallet under in the local map"},
+			&cli.StringFlag{Name: "user-id", Usage: "[hosted] account id (optional, needed for wallets add)"},
 			// node flags
 			&cli.StringFlag{Name: "lnd-endpoint", Usage: "[node] REST listener URL"},
 			&cli.StringFlag{Name: "lnd-tls-cert", Usage: "[node] path to tls.cert"},
@@ -171,21 +177,28 @@ func cmdLogin() *cli.Command {
 
 			switch cfg.Route {
 			case RouteHosted:
-				if v := c.String("admin-key"); v != "" {
-					cfg.Hosted.AdminKey = v
-				}
-				if v := c.String("invoice-key"); v != "" {
-					cfg.Hosted.InvoiceKey = v
-				}
-				if v := c.String("wallet-id"); v != "" {
-					cfg.Hosted.WalletID = v
+				adminKey := c.String("admin-key")
+				inKey := c.String("invoice-key")
+				walletID := c.String("wallet-id")
+				walletName := c.String("wallet-name")
+				if adminKey == "" && inKey == "" {
+					return fail("login --route hosted requires at least one of --admin-key or --invoice-key")
 				}
 				if v := c.String("user-id"); v != "" {
 					cfg.Hosted.UserID = v
 				}
-				if cfg.Hosted.AdminKey == "" && cfg.Hosted.InvoiceKey == "" {
-					return fail("login --route hosted requires at least one of --admin-key or --invoice-key")
+				// Merge into the named entry (replacing or creating).
+				existing := cfg.Hosted.Wallets[walletName]
+				if adminKey != "" {
+					existing.AdminKey = adminKey
 				}
+				if inKey != "" {
+					existing.InvoiceKey = inKey
+				}
+				if walletID != "" {
+					existing.WalletID = walletID
+				}
+				cfg.Hosted.PutWallet(walletName, existing)
 			case RouteNode:
 				if v := c.String("lnd-endpoint"); v != "" {
 					cfg.Node.Endpoint = v
@@ -222,7 +235,7 @@ func cmdWhoami() *cli.Command {
 			}
 			switch cfg.EffectiveRoute() {
 			case RouteHosted:
-				cl, err := hostedClientFromConfig(cfg, c.String("base-url"), c.Bool("insecure"), false)
+				cl, name, err := hostedClientFromConfig(cfg, c.String("base-url"), c.Bool("insecure"), false, c.String("wallet"))
 				if err != nil {
 					return err
 				}
@@ -230,7 +243,10 @@ func cmdWhoami() *cli.Command {
 				if err != nil {
 					return fail("whoami: %v", err)
 				}
-				return printJSON(w)
+				return printJSON(struct {
+					Alias  string                  `json:"alias"`
+					Wallet *sdk.HostedWalletStatus `json:"wallet"`
+				}{name, w})
 			case RouteNode:
 				nc, err := nodeClientFromConfig(cfg, "", c.Bool("insecure"))
 				if err != nil {
@@ -243,42 +259,6 @@ func cmdWhoami() *cli.Command {
 				return printJSON(info)
 			}
 			return fail("unknown route")
-		},
-	}
-}
-
-func cmdAddWallet() *cli.Command {
-	return &cli.Command{
-		Name:      "add-wallet",
-		Usage:     "Create an additional sub-wallet under the current account (hosted route only)",
-		ArgsUsage: "<name>",
-		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "user-id", Usage: "account id (defaults to value cached from `register`)"},
-		},
-		Action: func(c *cli.Context) error {
-			if c.NArg() < 1 {
-				return fail("wallet name is required")
-			}
-			cfg, err := loadConfig()
-			if err != nil {
-				return err
-			}
-			cl, err := hostedClientFromConfig(cfg, c.String("base-url"), c.Bool("insecure"), true)
-			if err != nil {
-				return err
-			}
-			userID := c.String("user-id")
-			if userID == "" {
-				userID = cfg.Hosted.UserID
-			}
-			if userID == "" {
-				return fail("add-wallet: --user-id is required (run `paycli register` first to cache it, or pass it explicitly)")
-			}
-			w, err := cl.CreateWallet(c.Context, userID, c.Args().First())
-			if err != nil {
-				return fail("add-wallet: %v", err)
-			}
-			return printJSON(w)
 		},
 	}
 }
@@ -344,11 +324,14 @@ func registerNamedHosted(c *cli.Context, cfg *Config) error {
 		}
 	}
 
-	cfg.Hosted.AdminKey = w.AdminKey
-	cfg.Hosted.InvoiceKey = w.InvoiceKey
-	cfg.Hosted.WalletID = w.ID
+	cfg.Hosted.Username = username
 	cfg.Hosted.UserID = w.User
 	cfg.Hosted.AdminBearerToken = jwt
+	cfg.Hosted.PutWallet("default", WalletEntry{
+		WalletID:   w.ID,
+		AdminKey:   w.AdminKey,
+		InvoiceKey: w.InvoiceKey,
+	})
 	if err := saveConfig(cfg); err != nil {
 		return fail("save config: %v", err)
 	}
@@ -358,7 +341,7 @@ func registerNamedHosted(c *cli.Context, cfg *Config) error {
 		Endpoint: cfg.Hosted.BaseURL,
 		WalletID: w.ID,
 		UserID:   w.User,
-		Memo:     "username=" + username + " name=" + w.Name,
+		Memo:     "username=" + username + " wallet=" + w.Name,
 	})
 	return printJSON(w)
 }

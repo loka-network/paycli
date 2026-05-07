@@ -32,6 +32,11 @@ func main() {
 				Usage:   "path to config file",
 				EnvVars: []string{"PAYCLI_CONFIG"},
 			},
+			&cli.StringFlag{
+				Name:    "wallet",
+				Usage:   "[hosted] sub-wallet alias to target (default: active_wallet from config)",
+				EnvVars: []string{"PAYCLI_WALLET"},
+			},
 		},
 		Before: func(c *cli.Context) error {
 			if p := c.String("config"); p != "" {
@@ -47,7 +52,7 @@ func main() {
 			cmdPay(),
 			cmdRequest(),
 			cmdHistory(),
-			cmdAddWallet(),
+			cmdWallets(),
 			cmdConfig(),
 			cmdServices(),
 			cmdAuthLogin(),
