@@ -60,14 +60,33 @@ func cmdWalletsList() *cli.Command {
 				names = append(names, n)
 			}
 			sort.Strings(names)
-			fmt.Printf("%-3s %-24s %-34s %-16s %-16s\n", "ACT", "NAME", "WALLET_ID", "ADMIN_KEY", "INVOICE_KEY")
+			// Compact column widths matched to maskSecretShort's 9-char
+			// "4chars…4chars" output, so the header line aligns with the
+			// values regardless of how long the underlying keys are.
+			const (
+				colAct = 3
+				colNm  = 16
+				colID  = 18
+				colKey = 11
+			)
+			fmt.Printf("%-*s %-*s %-*s %-*s %-*s\n",
+				colAct, "ACT",
+				colNm, "NAME",
+				colID, "WALLET_ID",
+				colKey, "ADMIN",
+				colKey, "INVOICE")
 			for _, n := range names {
 				w := cfg.Hosted.Wallets[n]
 				active := "  "
 				if n == cfg.Hosted.ActiveWallet {
 					active = "* "
 				}
-				fmt.Printf("%-3s %-24s %-34s %-16s %-16s\n", active, n, w.WalletID, maskSecret(w.AdminKey), maskSecret(w.InvoiceKey))
+				fmt.Printf("%-*s %-*s %-*s %-*s %-*s\n",
+					colAct, active,
+					colNm, truncateMid(n, colNm),
+					colID, truncateMid(w.WalletID, colID),
+					colKey, maskSecretShort(w.AdminKey),
+					colKey, maskSecretShort(w.InvoiceKey))
 			}
 			return nil
 		},
@@ -254,11 +273,35 @@ func cmdWalletsRemove() *cli.Command {
 	}
 }
 
-// truncateForList lets `wallets list` keep table rows tidy without losing
-// the prefix users need to recognize keys.
-func truncateForList(s string, n int) string {
+// maskSecretShort produces a fixed-shape "first-4 … last-4" preview,
+// suitable for tabular display where the full mask from maskSecret
+// (which preserves the original length) blows column alignment.
+//
+//	"" → "(none)"
+//	≤8 → all asterisks
+//	>8 → "abcd…wxyz"   (9 chars total)
+func maskSecretShort(s string) string {
+	if s == "" {
+		return "(none)"
+	}
+	if len(s) <= 8 {
+		return strings.Repeat("*", len(s))
+	}
+	return s[:4] + "…" + s[len(s)-4:]
+}
+
+// truncateMid keeps the start + end and drops the middle, so wallet
+// ids / aliases that exceed the column don't wrap or push everything
+// out of alignment. n is the target column width.
+func truncateMid(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n-1] + strings.Repeat("…", 1)
+	if n <= 3 {
+		return strings.Repeat(".", n)
+	}
+	keep := n - 1 // room for the single "…"
+	left := keep / 2
+	right := keep - left
+	return s[:left] + "…" + s[len(s)-right:]
 }
