@@ -123,6 +123,12 @@ hash, so the account can't log into the LNbits dashboard. Best for AI
 agents / automated provisioning where the admin_key is the only auth
 the caller will ever use.
 
+> **Duplicate-alias guard:** register and `wallets add` both refuse to
+> overwrite an existing entry under the same local alias (silently
+> losing the old keys would lock you out of that wallet). When the
+> guard fires, run `paycli wallets remove <alias>` first or pass
+> `--force` to opt back into overwrite explicitly.
+
 ```bash
 paycli --base-url http://127.0.0.1:5002 register "main"
 ```

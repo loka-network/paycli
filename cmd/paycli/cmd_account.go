@@ -38,6 +38,7 @@ func cmdRegister() *cli.Command {
 			&cli.StringFlag{Name: "username", Aliases: []string{"u"}, Usage: "[hosted] register a NAMED account (enables dashboard login + auth-login)"},
 			&cli.StringFlag{Name: "password", Aliases: []string{"p"}, Usage: "[hosted] password for --username (omit to read from tty)"},
 			&cli.StringFlag{Name: "email", Usage: "[hosted] optional email for the named account"},
+			&cli.BoolFlag{Name: "force", Usage: "[hosted] overwrite an existing wallet entry under the same alias (default refuses)"},
 			// node flags
 			&cli.StringFlag{Name: "lnd-endpoint", Usage: "[node] REST listener URL, e.g. https://127.0.0.1:8081"},
 			&cli.StringFlag{Name: "lnd-tls-cert", Usage: "[node] path to lnd's tls.cert"},
@@ -83,6 +84,9 @@ func cmdRegister() *cli.Command {
 				// Anonymous fast path.
 				if c.NArg() < 1 {
 					return fail("wallet name is required (or pass --username to register a named account)")
+				}
+				if err := guardDuplicateWallet(cfg, "default", c.Bool("force")); err != nil {
+					return fail("%v", err)
 				}
 				cl := sdk.New(cfg.Hosted.BaseURL)
 				if cfg.Insecure {
@@ -274,6 +278,13 @@ func cmdWhoami() *cli.Command {
 // `paycli admin-set` / `topup` immediately if their account has the
 // privileges.
 func registerNamedHosted(c *cli.Context, cfg *Config) error {
+	// Guard the local "default" alias before any remote call so we don't
+	// half-create a server-side account whose keys we then refuse to
+	// store. The check is identical to the anonymous path's.
+	if err := guardDuplicateWallet(cfg, "default", c.Bool("force")); err != nil {
+		return fail("%v", err)
+	}
+
 	username := c.String("username")
 	password := c.String("password")
 	if password == "" {
@@ -346,6 +357,30 @@ func registerNamedHosted(c *cli.Context, cfg *Config) error {
 		Memo:        "username=" + username + " wallet=" + w.Name,
 	})
 	return printJSON(w)
+}
+
+// guardDuplicateWallet returns an error when the wallets map already
+// contains the given alias, unless force is true. Used by both the
+// anonymous and named register paths and by `wallets add` to keep the
+// "create a new wallet" surface consistent — we never silently
+// overwrite an existing key set, since that loses access to the
+// previous wallet (the keys live nowhere else).
+//
+// The error message points at the two recovery paths:
+//   - explicit overwrite via --force (operator opted in to the loss)
+//   - first remove the old entry via `paycli wallets remove <alias>`
+func guardDuplicateWallet(cfg *Config, alias string, force bool) error {
+	if force {
+		return nil
+	}
+	existing, ok := cfg.Hosted.Wallets[alias]
+	if !ok {
+		return nil
+	}
+	return fmt.Errorf(
+		"a wallet alias %q already exists in this config (wallet_id %s) — refusing to overwrite. "+
+			"Either remove it first (`paycli wallets remove %s`) or pass --force to drop the old keys",
+		alias, existing.WalletID, alias)
 }
 
 func printJSON(v interface{}) error {

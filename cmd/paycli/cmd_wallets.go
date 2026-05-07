@@ -103,6 +103,7 @@ func cmdWalletsAdd() *cli.Command {
 			"<name> is the LOCAL alias paycli uses (also sent to the server as the wallet's display name).",
 		Flags: []cli.Flag{
 			&cli.BoolFlag{Name: "use", Usage: "also switch active_wallet to the newly-created entry"},
+			&cli.BoolFlag{Name: "force", Usage: "overwrite an existing local entry under the same alias (default refuses)"},
 		},
 		Action: func(c *cli.Context) error {
 			if c.NArg() < 1 {
@@ -117,8 +118,8 @@ func cmdWalletsAdd() *cli.Command {
 				return fail("wallets add: no super-user JWT cached — register a named account first " +
 					"(`paycli register --username NAME --password PW \"main\"`) or run `paycli auth-login`")
 			}
-			if _, exists := cfg.Hosted.Wallets[name]; exists {
-				return fail("wallets add: %q already exists locally — pick a different name or `wallets remove %s` first", name, name)
+			if err := guardDuplicateWallet(cfg, name, c.Bool("force")); err != nil {
+				return fail("wallets add: %v", err)
 			}
 			baseURL := cfg.Hosted.BaseURL
 			if v := c.String("base-url"); v != "" {
