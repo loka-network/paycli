@@ -62,14 +62,48 @@ Use **dotted keys** like `hosted.admin_key` and `node.endpoint` with
 
 ## Commands
 
-### `paycli register [<wallet-name>] [--route hosted|node]`
+### `paycli register [<wallet-name>] [--route hosted|node] [--username … --password …]`
 
-**Hosted (default)** — creates a fresh anonymous account + first wallet via
-`POST /api/v1/account`. Persists keys + user id.
+**Hosted, anonymous (default)** — creates a fresh user + first wallet via
+`POST /api/v1/account`. The DB row has empty username and no password
+hash, so the account can't log into the LNbits dashboard. Best for AI
+agents / automated provisioning where the admin_key is the only auth
+the caller will ever use.
 
 ```bash
 paycli --base-url http://127.0.0.1:5002 register "main"
 ```
+
+**Hosted, named** — when `--username` is set, switches to
+`POST /api/v1/auth/register`. The DB row gets a real `username` plus a
+bcrypt password hash, so the resulting account can:
+
+- log into the LNbits dashboard with username + password
+- be re-authenticated via `paycli auth-login`
+- act as super-user / operator if its account id matches `super_user`
+  or is in `lnbits_admin_users`
+
+`paycli` also fetches the auto-created wallet's keys (via
+`GET /api/v1/wallets`, Bearer auth on the just-issued JWT) and caches
+them alongside the JWT in the config — one command, fully ready for
+subsequent `whoami` / `fund` / `topup` / `admin-set`.
+
+```bash
+# Username must match lnbits' is_valid_username regex:
+#   ^[a-zA-Z0-9._]{2,20}$, no leading/trailing _ or ., no double __ or ..
+# Dashes / hyphens are NOT allowed.
+paycli --base-url http://127.0.0.1:5002 \
+    register --username alice --password "alice-pw" --email alice@example.com \
+    "alice-treasury"
+```
+
+If `--password` is omitted the CLI prompts on the tty.
+
+> ⚠️ **Flag-ordering caveat** (urfave/cli v2): the v2 parser stops
+> reading flags at the first positional argument. Put **all `--flag`
+> options BEFORE** the `[wallet-name]` positional. paycli detects the
+> wrong order and prints a helpful error rather than silently
+> falling through to the anonymous path.
 
 **Node** — no remote provisioning step; just pins the connection settings
 and probes `GetInfo` for sanity. Wallet name is optional in this mode.

@@ -113,6 +113,57 @@ func LoginWithPassword(ctx context.Context, baseURL, username, password string, 
 	return out.AccessToken, nil
 }
 
+// RegisterAccount creates a NAMED user account on agents-pay-service via
+// POST /api/v1/auth/register. Unlike CreateAccount (the anonymous fast path
+// at POST /api/v1/account), this route persists a username + bcrypt
+// password hash, so the resulting account can also log into the lnbits
+// dashboard or call back via LoginWithPassword later.
+//
+// email is optional ("" allowed). On success the server returns the JWT
+// for the just-created session. lnbits auto-creates a default wallet for
+// the new user — fetch its keys with ListWalletsByBearer.
+//
+// Server preconditions:
+//   - settings.lnbits_auth_methods must include "username-password"
+//     (LNBITS_AUTH_METHODS=...,username-password). Otherwise → 403.
+//   - the username must not already exist (case-insensitive on the
+//     unique index).
+func RegisterAccount(ctx context.Context, baseURL, username, password, email string, opts ...Option) (string, error) {
+	c := New(baseURL, opts...)
+	body := map[string]string{
+		"username":        username,
+		"password":        password,
+		"password_repeat": password,
+	}
+	if email != "" {
+		body["email"] = email
+	}
+	var out struct {
+		AccessToken string `json:"access_token"`
+		TokenType   string `json:"token_type"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/api/v1/auth/register", body, &out, false); err != nil {
+		return "", err
+	}
+	if out.AccessToken == "" {
+		return "", fmt.Errorf("paycli: register: empty access_token")
+	}
+	return out.AccessToken, nil
+}
+
+// ListWalletsByBearer returns every wallet the bearer JWT has access to
+// via GET /api/v1/wallets. Used after RegisterAccount to grab the
+// auto-created default wallet's admin/invoice keys without needing any
+// X-Api-Key (the JWT auths via the user-existence dependency).
+func ListWalletsByBearer(ctx context.Context, baseURL, bearerToken string, opts ...Option) ([]HostedWallet, error) {
+	c := New(baseURL, opts...)
+	var out []HostedWallet
+	if err := c.doWithBearer(ctx, http.MethodGet, "/api/v1/wallets", nil, &out, bearerToken); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AdminPatchSettings PATCHes /admin/api/v1/settings with a partial dict
 // of fields to update. Requires a super-user JWT (LoginWithPassword).
 //
@@ -259,6 +310,20 @@ func (c *Client) CreateWallet(ctx context.Context, userID, name string) (*Hosted
 func (c *Client) GetWallet(ctx context.Context) (*HostedWalletStatus, error) {
 	var w HostedWalletStatus
 	if err := c.do(ctx, http.MethodGet, "/api/v1/wallet", nil, &w, true); err != nil {
+		return nil, err
+	}
+	return &w, nil
+}
+
+// RenameWallet renames the wallet authenticated by the current admin key.
+//
+// PUT /api/v1/wallet/{new_name}
+func (c *Client) RenameWallet(ctx context.Context, newName string) (*HostedWalletStatus, error) {
+	if c.KeyType != KeyAdmin {
+		return nil, ErrAdminKeyRequired
+	}
+	var w HostedWalletStatus
+	if err := c.do(ctx, http.MethodPut, "/api/v1/wallet/"+url.PathEscape(newName), nil, &w, true); err != nil {
 		return nil, err
 	}
 	return &w, nil
