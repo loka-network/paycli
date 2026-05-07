@@ -276,13 +276,95 @@ sees the same three wallets under one account.
 
 ### 6d · Pay through Prism (canonical hosted L402 e2e)
 
+A fresh wallet starts at 0 balance, so we have to fund it first.
+There are two ways. **For this playbook the operator topup path is
+strongly preferred** — it bypasses LN entirely, doesn't depend on
+Alice/Bob channel state, and produces a deterministic credit in a
+millisecond. The Bob-payinvoice path is documented at the bottom for
+when you specifically want to exercise real LN settlement.
+
+#### Topup path (recommended)
+
+The hosted topup API is super-user only. The `alice` account we
+created in 6b is NOT a super user — only the bootstrap admin from
+step 4 is. We need admin's JWT cached in the SAME config file we'll
+use to topup, because `paycli topup` reads `hosted.admin_bearer_token`
+from whichever config the command points at.
+
+A clean way is to swap the JWT in alice's config for one logged in as
+admin, run the operator-only topup, and keep going. The wallet keys
+(`hosted.wallets.*.admin_key`) are not touched — those are per-wallet
+X-Api-Keys, completely independent from the account-level JWT.
+
 ```bash
-# Mint a topup invoice on the active wallet (default = "default").
+# 1. Cache admin's super-user JWT INTO alice's config. This overwrites
+#    hosted.admin_bearer_token but leaves hosted.wallets.* alone.
+PAYCLI_CONFIG=/tmp/paycli-cfg-h.json \
+    $PAYCLI --base-url $LNBITS_URL auth-login \
+    --username admin --password $ADMIN_PASSWORD
+
+# 2. Topup the active wallet (defaults to "default" alias for alice).
+PAYCLI_CONFIG=/tmp/paycli-cfg-h.json \
+    $PAYCLI topup --amount 1 --unit sui
+# → credited 1000000000 mist to wallet <id>
+
+# 3. Sanity check.
+PAYCLI_CONFIG=/tmp/paycli-cfg-h.json $PAYCLI whoami
+# Expect: balance ≈ 1000000000000 msat (= 1 SUI)
+```
+
+> If `auth-login` rejects the password (`api error 401: Invalid
+> credentials.`), the agents-pay-service install you're talking to
+> didn't go through this playbook's step 4 — the admin password
+> isn't `paycli-test-2026`. Easiest recovery is to redo step 4
+> (mv data dir + first_install + LndWallet + restart). Heavier but
+> deterministic.
+
+#### Drive the L402 request
+
+```bash
+PAYCLI_CONFIG=/tmp/paycli-cfg-h.json \
+    $PAYCLI request --insecure-target \
+    -H 'Host: merchant-bob.local' -i \
+    $PRISM_URL/freebieservice
+# Expect: HTTP 200 / 404 from the backend (not 402).
+# 404 just means the demo backend at 127.0.0.1:9998 has no /freebieservice
+# path, but Prism accepted the LSAT and forwarded — that's the L402 win.
+
+PAYCLI_CONFIG=/tmp/paycli-cfg-h.json $PAYCLI whoami
+# Expect: balance dropped by ~10M sat (service2's price = 10000000 MIST)
+```
+
+> If `paycli request` exits with `paycli: payment failed: status=pending`
+> but the balance still dropped by ~10M sat, the payment actually
+> settled — agents-pay-service's wallet driver returned the response
+> before lnd-sui's status state machine flipped from IN_FLIGHT to
+> SUCCEEDED. Same story as the self-payment caveat below; the L402
+> token didn't get fabricated (paycli is correctly conservative
+> about preimages), but the wallet balance reflects the real on-chain
+> outcome. Re-running the request usually settles cleanly once the
+> chain RPC has caught up.
+
+You can also verify the audit trail picked it up:
+
+```bash
+PAYCLI_CONFIG=/tmp/paycli-cfg-h.json $PAYCLI events -t l402_paid -n 1
+# 2026-…  l402_paid  [hosted]  wallet=default  status=success  hash=…  host=merchant-bob.local
+```
+
+#### 6d.alt · Funding via Bob payinvoice (real LN routing)
+
+Same end-state, but exercises a real Bob → Alice payment over the LN
+channel instead of the admin shortcut. Useful for verifying that the
+chain backend + HTLC settlement actually work end-to-end. Skip this
+for routine playbook runs — it's flaky on lnd-sui devnet because of
+the SUI chain-RPC drift caveat.
+
+```bash
 INV=$(PAYCLI_CONFIG=/tmp/paycli-cfg-h.json \
-        $PAYCLI fund --amount 100000000 --memo topup \
+        $PAYCLI fund --amount 0.1 --unit sui --memo topup \
         | jq -r .bolt11)
 
-# Have Bob pay it via REST.
 BOB_MAC=$(xxd -ps -u -c 1000 $BOB_DIR/data/chain/sui/devnet/admin.macaroon)
 curl -ks --cacert $BOB_DIR/tls.cert \
     -X POST $BOB_REST/v1/channels/transactions \
@@ -293,21 +375,11 @@ curl -ks --cacert $BOB_DIR/tls.cert \
 
 sleep 2
 PAYCLI_CONFIG=/tmp/paycli-cfg-h.json $PAYCLI whoami
-# Expect: alias="default", balance ≈ 100000000000 (msat).
-
-# Pay through Prism — service2 routes to Bob's lnd, so this is
-# Alice (paycli wallet) → Bob (Prism's per-service backend).
-PAYCLI_CONFIG=/tmp/paycli-cfg-h.json \
-    $PAYCLI request --insecure-target \
-    -H 'Host: merchant-bob.local' -i \
-    $PRISM_URL/freebieservice
-# Expect: HTTP 200 / 404 from the backend (not 402).
-# 404 just means the demo backend at 127.0.0.1:9998 has no /freebieservice
-# path, but Prism accepted the LSAT and forwarded — that's the L402 win.
-
-PAYCLI_CONFIG=/tmp/paycli-cfg-h.json $PAYCLI whoami
-# Expect: balance ≈ 90000000000 — exactly 10M sat (service2 price) deducted.
+# Expect: balance ≈ 100000000000 msat (0.1 SUI)
 ```
+
+If the curl call returns the SUI chain backend's pprof page instead of
+a clean preimage, the lnd-sui devnet has drifted — restart per § 2.
 
 ---
 
@@ -338,7 +410,10 @@ PAYCLI_CONFIG=/tmp/paycli-cfg-h.json \
 
 ## 7 · Node route — Bob's lnd-sui pays Alice via service1
 
-This is the canonical cross-wallet **node-route** test.
+This is the canonical cross-wallet **node-route** test. Unlike the
+hosted route (§ 6d), node mode doesn't need any pre-funding step —
+Bob's lnd already has 5 SUI of channel capacity from step 5, so it
+can pay Prism's invoice directly from the channel.
 
 ```bash
 PAYCLI_CONFIG=/tmp/paycli-cfg-n.json $PAYCLI register --route node \
