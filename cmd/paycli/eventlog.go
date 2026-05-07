@@ -26,11 +26,12 @@ const (
 // at mint time is informational; topup_credit credits the wallet).
 // Negative = funds LEAVING the wallet (pay_sent, l402_paid).
 type Event struct {
-	Timestamp      string `json:"ts"`                 // RFC3339Nano
-	Event          string `json:"event"`              // see consts above
-	Route          string `json:"route,omitempty"`    // hosted | node
-	Endpoint       string `json:"endpoint,omitempty"` // base_url / lnd endpoint
-	WalletID       string `json:"wallet_id,omitempty"`
+	Timestamp      string `json:"ts"`                       // RFC3339Nano
+	Event          string `json:"event"`                    // see consts above
+	Route          string `json:"route,omitempty"`          // hosted | node
+	Endpoint       string `json:"endpoint,omitempty"`       // base_url / lnd endpoint
+	WalletAlias    string `json:"wallet_alias,omitempty"`   // local alias from hosted.wallets[<alias>]; "" on node route
+	WalletID       string `json:"wallet_id,omitempty"`      // server-side wallet id
 	UserID         string `json:"user_id,omitempty"`
 	Amount         int64  `json:"amount,omitempty"`         // wallet's base unit (sat / MIST / msat depending on route)
 	Unit           string `json:"unit,omitempty"`           // sat / MIST / msat — disambiguates Amount

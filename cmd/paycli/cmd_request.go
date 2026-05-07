@@ -44,6 +44,12 @@ func cmdRequest() *cli.Command {
 			if err != nil {
 				return fail("request: %v", err)
 			}
+			// Resolve which wallet alias was selected (only meaningful on
+			// hosted; node route has no alias). Used to tag the L402 event.
+			var walletAlias string
+			if cfg.EffectiveRoute() == RouteHosted {
+				walletAlias, _, _ = cfg.Hosted.ResolveWallet(c.String("wallet"))
+			}
 
 			doer := sdk.NewL402Doer(wallet)
 			doer.MaxRetries = c.Int("max-retries")
@@ -68,6 +74,7 @@ func cmdRequest() *cli.Command {
 				LogEvent(Event{
 					Event:       EventL402Paid,
 					Route:       string(cfg.EffectiveRoute()),
+					WalletAlias: walletAlias,
 					PaymentHash: paid.PaymentHash,
 					Preimage:    paid.Preimage,
 					Status:      paid.Status,

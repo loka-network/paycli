@@ -108,6 +108,9 @@ func formatEvent(e Event) string {
 	if e.Route != "" {
 		fmt.Fprintf(&b, "  [%s]", e.Route)
 	}
+	if e.WalletAlias != "" {
+		fmt.Fprintf(&b, "  wallet=%s", e.WalletAlias)
+	}
 	if e.Amount != 0 {
 		unit := e.Unit
 		if unit == "" {

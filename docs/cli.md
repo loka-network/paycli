@@ -285,6 +285,7 @@ The schema fields:
 | `event` | `account_created` \| `invoice_created` \| `pay_sent` \| `l402_paid` \| `topup_credit` |
 | `route` | `hosted` or `node` |
 | `endpoint` | base_url (hosted) or lnd REST URL (node) |
+| `wallet_alias` | hosted only — the local alias under `hosted.wallets[…]` (e.g. `agentresearch`) |
 | `wallet_id`, `user_id` | populated when known |
 | `amount`, `unit` | positive = inflow, negative = outflow |
 | `payment_hash`, `preimage`, `status` | settlement detail |

@@ -105,12 +105,13 @@ func cmdRegister() *cli.Command {
 					return fail("save config: %v", err)
 				}
 				LogEvent(Event{
-					Event:    EventAccountCreated,
-					Route:    string(RouteHosted),
-					Endpoint: cfg.Hosted.BaseURL,
-					WalletID: w.ID,
-					UserID:   w.User,
-					Memo:     "anonymous wallet=" + w.Name,
+					Event:       EventAccountCreated,
+					Route:       string(RouteHosted),
+					Endpoint:    cfg.Hosted.BaseURL,
+					WalletAlias: "default",
+					WalletID:    w.ID,
+					UserID:      w.User,
+					Memo:        "anonymous wallet=" + w.Name,
 				})
 				return printJSON(w)
 
@@ -336,12 +337,13 @@ func registerNamedHosted(c *cli.Context, cfg *Config) error {
 		return fail("save config: %v", err)
 	}
 	LogEvent(Event{
-		Event:    EventAccountCreated,
-		Route:    string(RouteHosted),
-		Endpoint: cfg.Hosted.BaseURL,
-		WalletID: w.ID,
-		UserID:   w.User,
-		Memo:     "username=" + username + " wallet=" + w.Name,
+		Event:       EventAccountCreated,
+		Route:       string(RouteHosted),
+		Endpoint:    cfg.Hosted.BaseURL,
+		WalletAlias: "default",
+		WalletID:    w.ID,
+		UserID:      w.User,
+		Memo:        "username=" + username + " wallet=" + w.Name,
 	})
 	return printJSON(w)
 }

@@ -40,12 +40,13 @@ func cmdFund() *cli.Command {
 					Event:          EventInvoiceCreated,
 					Route:          string(RouteHosted),
 					Endpoint:       cl.BaseURL,
+					WalletAlias:    walletAlias,
 					WalletID:       w.WalletID,
 					UserID:         cfg.Hosted.UserID,
 					Amount:         c.Int64("amount"),
 					Unit:           c.String("unit"),
 					PaymentHash:    p.PaymentHash,
-					Memo:           c.String("memo") + " [wallet=" + walletAlias + "]",
+					Memo:           c.String("memo"),
 					PaymentRequest: pickNonEmpty(p.Bolt11, p.PaymentRequest),
 				})
 				return printJSON(p)
@@ -99,12 +100,13 @@ func cmdPay() *cli.Command {
 				p, err := cl.PayInvoice(c.Context, bolt11)
 				if err != nil {
 					LogEvent(Event{
-						Event:    EventPaySent,
-						Route:    string(RouteHosted),
-						Endpoint: cl.BaseURL,
-						WalletID: w.WalletID,
-						Status:   "failed",
-						Error:    err.Error(),
+						Event:       EventPaySent,
+						Route:       string(RouteHosted),
+						Endpoint:    cl.BaseURL,
+						WalletAlias: walletAlias,
+						WalletID:    w.WalletID,
+						Status:      "failed",
+						Error:       err.Error(),
 					})
 					return fail("pay: %v", err)
 				}
@@ -112,13 +114,13 @@ func cmdPay() *cli.Command {
 					Event:       EventPaySent,
 					Route:       string(RouteHosted),
 					Endpoint:    cl.BaseURL,
+					WalletAlias: walletAlias,
 					WalletID:    w.WalletID,
 					Amount:      -absInt64(p.Amount),
 					Unit:        "msat",
 					PaymentHash: p.PaymentHash,
 					Preimage:    p.Preimage,
 					Status:      p.Status,
-					Memo:        "wallet=" + walletAlias,
 				})
 				return printJSON(p)
 			case RouteNode:

@@ -42,12 +42,23 @@ func cmdTopup() *cli.Command {
 				return fail("topup: no super-user token cached — run `paycli auth login --username <name>` first")
 			}
 			walletID := c.String("wallet-id")
+			var walletAlias string
 			if walletID == "" {
-				_, w, err := cfg.Hosted.ResolveWallet(c.String("wallet"))
+				name, w, err := cfg.Hosted.ResolveWallet(c.String("wallet"))
 				if err != nil {
 					return fail("topup: --wallet-id not given and no active wallet to default to: %v", err)
 				}
 				walletID = w.WalletID
+				walletAlias = name
+			} else {
+				// Operator passed an explicit id; try to find a matching
+				// alias in the local map for nicer logs (best-effort).
+				for n, w := range cfg.Hosted.Wallets {
+					if w.WalletID == walletID {
+						walletAlias = n
+						break
+					}
+				}
 			}
 			baseURL := cfg.Hosted.BaseURL
 			if v := c.String("base-url"); v != "" {
@@ -63,24 +74,26 @@ func cmdTopup() *cli.Command {
 			if err := sdk.AdminCreditWallet(c.Context, baseURL, cfg.Hosted.AdminBearerToken,
 				walletID, c.Int64("amount"), opts...); err != nil {
 				LogEvent(Event{
-					Event:    EventTopupCredit,
-					Route:    string(RouteHosted),
-					Endpoint: baseURL,
-					WalletID: walletID,
-					Amount:   c.Int64("amount"),
-					Status:   "failed",
-					Error:    err.Error(),
+					Event:       EventTopupCredit,
+					Route:       string(RouteHosted),
+					Endpoint:    baseURL,
+					WalletAlias: walletAlias,
+					WalletID:    walletID,
+					Amount:      c.Int64("amount"),
+					Status:      "failed",
+					Error:       err.Error(),
 				})
 				return fail("topup: %v", err)
 			}
 			LogEvent(Event{
-				Event:    EventTopupCredit,
-				Route:    string(RouteHosted),
-				Endpoint: baseURL,
-				WalletID: walletID,
-				Amount:   c.Int64("amount"),
-				Unit:     "sat",
-				Status:   "success",
+				Event:       EventTopupCredit,
+				Route:       string(RouteHosted),
+				Endpoint:    baseURL,
+				WalletAlias: walletAlias,
+				WalletID:    walletID,
+				Amount:      c.Int64("amount"),
+				Unit:        "sat",
+				Status:      "success",
 			})
 			fmt.Printf("credited %d to wallet %s\n", c.Int64("amount"), walletID)
 			return nil

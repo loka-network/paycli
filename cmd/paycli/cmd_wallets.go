@@ -129,12 +129,13 @@ func cmdWalletsAdd() *cli.Command {
 				return fail("save config: %v", err)
 			}
 			LogEvent(Event{
-				Event:    EventAccountCreated,
-				Route:    string(RouteHosted),
-				Endpoint: baseURL,
-				WalletID: w.ID,
-				UserID:   cfg.Hosted.UserID,
-				Memo:     "sub-wallet alias=" + name + " name=" + w.Name,
+				Event:       EventAccountCreated,
+				Route:       string(RouteHosted),
+				Endpoint:    baseURL,
+				WalletAlias: name,
+				WalletID:    w.ID,
+				UserID:      cfg.Hosted.UserID,
+				Memo:        "sub-wallet name=" + w.Name,
 			})
 			return printJSON(w)
 		},
