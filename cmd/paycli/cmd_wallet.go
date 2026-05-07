@@ -13,15 +13,19 @@ func cmdFund() *cli.Command {
 		Name:  "fund",
 		Usage: "Generate a BOLT11 invoice to receive funds into the active wallet",
 		Flags: []cli.Flag{
-			&cli.Int64Flag{Name: "amount", Aliases: []string{"a"}, Required: true, Usage: "amount in wallet base unit (sat or MIST)"},
+			&cli.Float64Flag{Name: "amount", Aliases: []string{"a"}, Required: true, Usage: "amount in --unit (e.g. `--amount 0.1 --unit sui` or `--amount 1000 --unit sat`)"},
 			&cli.StringFlag{Name: "memo", Aliases: []string{"m"}, Usage: "human-readable memo"},
-			&cli.StringFlag{Name: "unit", Value: "sat", Usage: "[hosted] amount unit"},
+			&cli.StringFlag{Name: "unit", Value: "sat", Usage: "amount unit: sat | mist (sub-unit), sui (whole, multiplies by 1e9), or a fiat code (USD/EUR/...) for server-side oracle conversion"},
 			&cli.IntFlag{Name: "expiry", Usage: "invoice TTL seconds"},
 		},
 		Action: func(c *cli.Context) error {
 			cfg, err := loadConfig()
 			if err != nil {
 				return err
+			}
+			subAmount, serverUnit, err := resolveAmount(c.Float64("amount"), c.String("unit"))
+			if err != nil {
+				return fail("fund: %v", err)
 			}
 			switch cfg.EffectiveRoute() {
 			case RouteHosted:
@@ -30,9 +34,9 @@ func cmdFund() *cli.Command {
 					return err
 				}
 				p, err := cl.CreateInvoice(c.Context, sdk.CreateInvoiceRequest{
-					Amount: c.Int64("amount"),
+					Amount: subAmount,
 					Memo:   c.String("memo"),
-					Unit:   c.String("unit"),
+					Unit:   serverUnit,
 					Expiry: c.Int("expiry"),
 				})
 				if err != nil {
@@ -46,8 +50,8 @@ func cmdFund() *cli.Command {
 					WalletAlias:    walletAlias,
 					WalletID:       w.WalletID,
 					UserID:         cfg.Hosted.UserID,
-					Amount:         c.Int64("amount"),
-					Unit:           c.String("unit"),
+					Amount:         subAmount,
+					Unit:           serverUnit,
 					PaymentHash:    p.PaymentHash,
 					Memo:           c.String("memo"),
 					PaymentRequest: pickNonEmpty(p.Bolt11, p.PaymentRequest),
@@ -62,7 +66,13 @@ func cmdFund() *cli.Command {
 				if err != nil {
 					return err
 				}
-				resp, err := nc.AddInvoice(c.Context, c.Int64("amount"), c.String("memo"), int64(c.Int("expiry")))
+				// lnd-rest's value field is sub-unit (sat or MIST). For
+				// fiat units we can't talk to lnd directly, so reject —
+				// node mode has no oracle.
+				if serverUnit != "sat" && serverUnit != "mist" {
+					return fail("fund: node route only accepts sat/mist/sui units (no oracle on the node side)")
+				}
+				resp, err := nc.AddInvoice(c.Context, subAmount, c.String("memo"), int64(c.Int("expiry")))
 				if err != nil {
 					return fail("fund: %v", err)
 				}
@@ -70,8 +80,8 @@ func cmdFund() *cli.Command {
 					Event:          EventInvoiceCreated,
 					Route:          string(RouteNode),
 					Endpoint:       nc.Endpoint,
-					Amount:         c.Int64("amount"),
-					Unit:           "sat",
+					Amount:         subAmount,
+					Unit:           serverUnit,
 					PaymentHash:    resp.PaymentHashHex(),
 					Memo:           c.String("memo"),
 					PaymentRequest: resp.PaymentRequest,

@@ -31,7 +31,8 @@ func cmdTopup() *cli.Command {
 		Usage: "Credit a hosted wallet via the super-user admin API (operator only)",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "wallet-id", Usage: "target wallet id (defaults to active wallet)"},
-			&cli.Int64Flag{Name: "amount", Required: true, Usage: "amount to credit (sats / MIST), negative = debit"},
+			&cli.Float64Flag{Name: "amount", Required: true, Usage: "amount to credit in --unit (negative = debit)"},
+			&cli.StringFlag{Name: "unit", Value: "sat", Usage: "amount unit: sat | mist | sui (whole, multiplies by 1e9)"},
 		},
 		Action: func(c *cli.Context) error {
 			cfg, err := loadConfig()
@@ -41,6 +42,24 @@ func cmdTopup() *cli.Command {
 			if cfg.Hosted.AdminBearerToken == "" {
 				return fail("topup: no super-user token cached — run `paycli auth login --username <name>` first")
 			}
+			// topup amount can be negative (= debit), so sign-preserve via
+			// resolveAmount on the absolute value then re-apply the sign.
+			amt := c.Float64("amount")
+			sign := int64(1)
+			if amt < 0 {
+				sign = -1
+				amt = -amt
+			}
+			subAmount, serverUnit, err := resolveAmount(amt, c.String("unit"))
+			if err != nil {
+				return fail("topup: %v", err)
+			}
+			// PUT /users/api/v1/balance only accepts native sub-units;
+			// no fiat code makes sense at this admin-side endpoint.
+			if serverUnit != "sat" && serverUnit != "mist" {
+				return fail("topup: --unit must resolve to sat or mist (got %q)", serverUnit)
+			}
+			subAmount *= sign
 			walletID := c.String("wallet-id")
 			var walletAlias string
 			if walletID == "" {
@@ -72,14 +91,15 @@ func cmdTopup() *cli.Command {
 				opts = append(opts, sdk.WithInsecureTLS())
 			}
 			if err := sdk.AdminCreditWallet(c.Context, baseURL, cfg.Hosted.AdminBearerToken,
-				walletID, c.Int64("amount"), opts...); err != nil {
+				walletID, subAmount, opts...); err != nil {
 				LogEvent(Event{
 					Event:       EventTopupCredit,
 					Route:       string(RouteHosted),
 					Endpoint:    baseURL,
 					WalletAlias: walletAlias,
 					WalletID:    walletID,
-					Amount:      c.Int64("amount"),
+					Amount:      subAmount,
+					Unit:        serverUnit,
 					Status:      "failed",
 					Error:       err.Error(),
 				})
@@ -91,11 +111,11 @@ func cmdTopup() *cli.Command {
 				Endpoint:    baseURL,
 				WalletAlias: walletAlias,
 				WalletID:    walletID,
-				Amount:      c.Int64("amount"),
-				Unit:        "sat",
+				Amount:      subAmount,
+				Unit:        serverUnit,
 				Status:      "success",
 			})
-			fmt.Printf("credited %d to wallet %s\n", c.Int64("amount"), walletID)
+			fmt.Printf("credited %d %s to wallet %s\n", subAmount, serverUnit, walletID)
 			return nil
 		},
 	}

@@ -192,17 +192,35 @@ paycli login --route node \
 (node-mode `GetInfo` against lnd-sui devnet sometimes errors with the
 chain-backend's pprof page — see `docs/sdk.md#known-issue-with-lnd-sui-devnet`.)
 
-### `paycli fund --amount N [--memo …] [--unit sat] [--expiry seconds]`
+### `paycli fund --amount N [--unit sat|mist|sui|<fiat>] [--memo …] [--expiry seconds]`
 
-Generate a BOLT11 invoice for receiving funds into the configured wallet.
+Generate a BOLT11 invoice for receiving funds into the active wallet.
 
-* hosted: `POST /api/v1/payments {out:false, amount:N}` → returns the full
-  hosted `Payment` object including `bolt11`.
-* node: `POST /v1/invoices {value:N, memo, expiry}` → returns the lnd
-  `AddInvoice` response with `payment_request`.
+`--unit` controls how `--amount` is interpreted:
+
+| --unit | meaning | example |
+|---|---|---|
+| `sat` (default) | sub-unit, integer | `--amount 1000` (1000 sat / MIST under SUI bridge) |
+| `mist` | sub-unit, integer (alias of sat under SUI) | `--amount 1000 --unit mist` |
+| `sui` | **whole SUI** — paycli multiplies by 1e9 to MIST on the wire | `--amount 0.1 --unit sui` (100M MIST) |
+| `USD` / `EUR` / … | **fiat** — server's oracle does the conversion (hosted only) | `--amount 0.10 --unit USD` |
+
+Why no `--unit btc`? 1 BTC ≈ $100k+, so day-to-day LN amounts are
+typed in sat directly. There's no ergonomic gain from a whole-BTC
+flag, and adding one risks ambiguous reads. Stay in sat for BTC
+deployments. SUI is different — 1 SUI ≈ $1, so users naturally
+think in SUI.
+
+* hosted: `POST /api/v1/payments {out:false, amount:N, unit:U}` → full
+  hosted `Payment` object including `bolt11`. Fractional sub-units are
+  rejected client-side; sub-MIST resolution is rejected for `--unit sui`.
+* node: `POST /v1/invoices {value:N, memo, expiry}`. Node mode has no
+  oracle, so fiat units are rejected.
 
 ```bash
-paycli fund --amount 1000 --memo "topup"
+paycli fund --amount 0.1 --unit sui --memo "topup"   # 0.1 SUI
+paycli fund --amount 100000000 --memo "topup"        # 100M MIST (same)
+paycli fund --amount 0.10 --unit USD --memo "topup"  # hosted-route oracle
 ```
 
 ### `paycli pay <bolt11>`

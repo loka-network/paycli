@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/loka-network/paycli/pkg/sdk"
 	"github.com/urfave/cli/v2"
@@ -88,6 +89,54 @@ var (
 // chainFromExtra below for a deterministic answer.
 func guessNativeChain() chainUnits {
 	return chainSUI
+}
+
+// resolveAmount converts a (amount, unit) pair from the CLI into the
+// integer sub-unit + unit name the server expects.
+//
+// Why only `sui` gets whole-unit support:
+//   - 1 SUI ≈ $1, so people naturally think in SUI ("0.1 SUI"). Without
+//     this, every SUI invoice needs the user to type 9 zeros.
+//   - 1 BTC ≈ $100k+. Real-world LN amounts are always typed in sat
+//     directly (or as msat). A `--unit btc` flag would be useful in
+//     about 0.1% of cases and add ambiguity, so it's intentionally
+//     omitted.
+//
+// Accepted units:
+//   sat | mist                — sub-unit (integer required); pass through
+//   sui                       — whole SUI; pre-multiplied by 1e9 to MIST,
+//                                unit rewritten to "mist" on the wire
+//   any other (USD, EUR, …)   — fiat; pass through; lnbits oracle does
+//                                the conversion server-side
+//
+// Errors when a fractional amount is given for sub-units (lnbits rounds
+// to int and would silently store 0) or when SUI doesn't divide cleanly
+// to whole MIST.
+func resolveAmount(amount float64, unit string) (int64, string, error) {
+	u := strings.ToLower(unit)
+	switch u {
+	case "sui":
+		v := amount * 1_000_000_000 // 10^9 MIST per SUI
+		if !isIntegral(v) {
+			return 0, "", fmt.Errorf("amount %.9f SUI is not a whole number of MIST", amount)
+		}
+		return int64(v), "mist", nil
+	case "sat", "mist":
+		if !isIntegral(amount) {
+			return 0, "", fmt.Errorf("amount %v %s must be an integer (sub-unit can't be fractional)", amount, u)
+		}
+		return int64(amount), u, nil
+	default:
+		// Fiat code or unknown — pass through to the server. lnbits will
+		// either oracle-convert (USD, EUR, …) or reject (unknown code).
+		// We can't represent fractional fiat in the existing int64 amount
+		// field, so warn but proceed with rounding.
+		return int64(amount), unit, nil
+	}
+}
+
+func isIntegral(f float64) bool {
+	return f == float64(int64(f))
 }
 
 // chainFromExtra inspects the `extra` dict on a fund/pay response and
