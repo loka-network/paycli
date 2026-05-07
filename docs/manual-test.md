@@ -4,16 +4,20 @@ A single document you can run **command by command, top to bottom**, to
 bring up the full local Loka stack and verify both paycli routes pay
 real Lightning invoices through Prism.
 
-Last verified: 2026-05-06 against the local devnet.
+Last verified: 2026-05-07 against the local devnet.
 
 ## What you'll end up with
 
-- `lnd-sui` Alice + Bob with an open channel (Bob: 5 SUI local capacity)
+- `lnd-sui` Alice + Bob with two open channels (incl. self-payment-capable
+  topology — see step [8/8] of the itest)
 - `loka-prism-l402` on `https://127.0.0.1:8080`
 - `agents-pay-service` (LNbits fork) on `http://127.0.0.1:5002`,
   super-user provisioned with a known password
 - `paycli` binary at `bin/paycli`
-- Two confirmed L402 payments through Prism — one hosted, one node
+- A demo user account with three sub-wallets (one default, two
+  per-agent) — exercises the multi-wallet model
+- Confirmed L402 payments through Prism on both routes
+- Structured payment audit trail at `~/.paycli/events.jsonl`
 
 ## Prerequisites
 
@@ -180,20 +184,105 @@ $PAYCLI services \
 
 ---
 
-## 6 · Hosted route — pay through service2 (Alice → Bob)
+## 6 · Hosted route — register modes
 
-This is the **canonical end-to-end hosted-route test** because it
-exercises a real cross-wallet payment.
+paycli has two `register` modes on the hosted route. Pick the one that
+matches your role.
+
+### 6a · Anonymous register (the default — no creds needed)
+
+`paycli register "<wallet-name>"` calls `POST /api/v1/account`, which is
+LNbits' anonymous fast path: no username, no password, no email. The DB
+row gets only a generated `id`, so this account **cannot** log into the
+LNbits dashboard. Designed for AI-agent fleet provisioning where
+the `admin_key` is the only auth the caller will ever use.
 
 ```bash
 PAYCLI_CONFIG=/tmp/paycli-cfg-h.json \
     $PAYCLI --base-url $LNBITS_URL register "h-test"
+# Output: { id, user, name: "h-test", adminkey, inkey, ... }
+# config.json: hosted.wallets["default"] = { admin/invoice key, wallet_id }
+```
 
-# Mint a topup invoice and have Bob pay it via REST.
+### 6b · Named register (--username, dashboard-capable, multi-wallet)
+
+When `--username` is set, paycli switches to `POST /api/v1/auth/register`.
+The server stores a real username + bcrypt password hash, so the user
+can:
+
+- log into the LNbits dashboard (`/wallet` page)
+- be re-authenticated by `paycli auth-login`
+- act as super-user / operator if their account id is in
+  `super_user` / `lnbits_admin_users`
+
+paycli also fetches the auto-created wallet's keys via
+`GET /api/v1/wallets` (Bearer JWT) and caches both keys + JWT in the
+config — one command, fully ready for `topup` / `admin-set` / multi-wallet
+provisioning.
+
+> ⚠️ **Flag ordering**: urfave/cli v2 stops parsing flags at the first
+> positional argument. Put `--username` / `--password` / `--email`
+> **before** the wallet-name positional. paycli detects the wrong order
+> and prints a helpful error, but it's worth knowing.
+
+> ⚠️ **Username regex**: lnbits' `is_valid_username` only accepts
+> `[a-zA-Z0-9._]{2,20}` — no dashes / hyphens, no leading/trailing `_`
+> or `.`, no `__` / `..`.
+
+```bash
+PAYCLI_CONFIG=/tmp/paycli-cfg-h.json \
+    $PAYCLI --base-url $LNBITS_URL \
+    register --username alice --password "alice_pw_2026" --email alice@example.com \
+    "main"
+# config.json now also has:
+#   hosted.username = "alice"
+#   hosted.admin_bearer_token = "<JWT>"  ← cached, no re-login needed
+#   hosted.wallets["default"] = { ... }
+#   hosted.active_wallet = "default"
+```
+
+This is the recommended setup for the rest of this playbook because it
+unlocks step 6c (multi-wallet) + step 8 (operator topup via
+`admin_bearer_token`).
+
+### 6c · Multi-wallet — one user, many agents
+
+A user account holds N sub-wallets. Each gets its own `admin_key` /
+`invoice_key`, so different agents can be scoped to different wallets:
+
+```bash
+PAYCLI_CONFIG=/tmp/paycli-cfg-h.json $PAYCLI wallets list
+# Initially: just "default" (the one created at register time)
+
+PAYCLI_CONFIG=/tmp/paycli-cfg-h.json $PAYCLI wallets add agentresearch
+PAYCLI_CONFIG=/tmp/paycli-cfg-h.json $PAYCLI wallets add agenttrading
+
+PAYCLI_CONFIG=/tmp/paycli-cfg-h.json $PAYCLI wallets list
+# ACT NAME              WALLET_ID                          ADMIN_KEY    INVOICE_KEY
+#     agentresearch     f9c7abb6db01...                    9113****     b1ca****
+#     agenttrading      eba80c3fd3ae...                    3470****     3819****
+# *   default           68146cff5ff7...                    e691****     9917****
+
+# Switch active for a session:
+PAYCLI_CONFIG=/tmp/paycli-cfg-h.json $PAYCLI wallets use agentresearch
+
+# Override per-call without switching:
+PAYCLI_CONFIG=/tmp/paycli-cfg-h.json $PAYCLI --wallet default whoami
+PAYCLI_CONFIG=/tmp/paycli-cfg-h.json $PAYCLI --wallet agenttrading fund --amount 1000
+```
+
+The dashboard at `http://127.0.0.1:5002` (login: alice / alice_pw_2026)
+sees the same three wallets under one account.
+
+### 6d · Pay through Prism (canonical hosted L402 e2e)
+
+```bash
+# Mint a topup invoice on the active wallet (default = "default").
 INV=$(PAYCLI_CONFIG=/tmp/paycli-cfg-h.json \
         $PAYCLI fund --amount 100000000 --memo topup \
         | jq -r .bolt11)
 
+# Have Bob pay it via REST.
 BOB_MAC=$(xxd -ps -u -c 1000 $BOB_DIR/data/chain/sui/devnet/admin.macaroon)
 curl -ks --cacert $BOB_DIR/tls.cert \
     -X POST $BOB_REST/v1/channels/transactions \
@@ -204,20 +293,45 @@ curl -ks --cacert $BOB_DIR/tls.cert \
 
 sleep 2
 PAYCLI_CONFIG=/tmp/paycli-cfg-h.json $PAYCLI whoami
-# Expect: balance ≈ 100000000000 (msat).
+# Expect: alias="default", balance ≈ 100000000000 (msat).
 
-# Pay through Prism — service2 routes invoices to Bob's lnd, so this is
+# Pay through Prism — service2 routes to Bob's lnd, so this is
 # Alice (paycli wallet) → Bob (Prism's per-service backend).
 PAYCLI_CONFIG=/tmp/paycli-cfg-h.json \
     $PAYCLI request --insecure-target \
     -H 'Host: merchant-bob.local' -i \
     $PRISM_URL/freebieservice
-# Expect: HTTP 200 / 404 from the backend service (not 402).
-# 404 just means the demo backend at 127.0.0.1:9998 has no /freebieservice path,
-# but Prism HAS accepted the LSAT and forwarded — that's the L402 win.
+# Expect: HTTP 200 / 404 from the backend (not 402).
+# 404 just means the demo backend at 127.0.0.1:9998 has no /freebieservice
+# path, but Prism accepted the LSAT and forwarded — that's the L402 win.
 
 PAYCLI_CONFIG=/tmp/paycli-cfg-h.json $PAYCLI whoami
-# Expect: balance ≈ 90000000000 — exactly 10M sat (service2 price) was deducted.
+# Expect: balance ≈ 90000000000 — exactly 10M sat (service2 price) deducted.
+```
+
+---
+
+### 6e · Self-payment (Alice → Alice via service1)
+
+If you want to verify the upstream-lnd self-payment story is wired up
+end-to-end (see § "lnd-sui self-payment" caveat below), this is the
+test. It needs `lnd_grpc_allow_self_payment=true` on the lnbits side:
+
+```bash
+$PAYCLI admin-set lnd_grpc_allow_self_payment true
+pkill -f 'lnbits --port 5002'                       # restart so the funding
+( cd $LOKA/agents-pay-service && \                  # source picks up the flag
+    LND_GRPC_ALLOW_SELF_PAYMENT=true \
+    ./.venv/bin/lnbits --port 5002 \
+    < /dev/null > /tmp/paycli-itest/lnbits.log 2>&1 ) &
+until nc -z 127.0.0.1 5002; do sleep 1; done
+
+# Now `request` against service1 (authenticator = Alice = paycli's
+# funding source) settles via the alice ↔ bob ↔ alice cycle that step
+# [8/8] of the itest also exercises.
+PAYCLI_CONFIG=/tmp/paycli-cfg-h.json \
+    $PAYCLI request --insecure-target -H 'Host: service1.com' -i \
+    $PRISM_URL/freebieservice
 ```
 
 ---
@@ -263,23 +377,75 @@ echo "delta:  $((BEFORE - AFTER)) sat"
 ## 8 · Operator topup (skip the LN channel)
 
 Useful when channels are unavailable or you want a deterministic credit.
+Requires the cached super-user JWT — present after step 6b's named
+register (the JWT was issued to the `alice` account; whether `topup`
+works depends on `alice`'s id matching `super_user` / `lnbits_admin_users`,
+which the bootstrap admin from step 4 always satisfies).
+
+If `alice` doesn't have super-user rights, log in explicitly:
 
 ```bash
-WALLET_ID=$(jq -r .wallet_id /tmp/paycli-cfg-h.json)
-
-PAYCLI_CONFIG=/tmp/paycli-cfg-h.json \
-    $PAYCLI topup --wallet-id $WALLET_ID --amount 50000000
-# → "credited 50000000 to wallet …"
-
-PAYCLI_CONFIG=/tmp/paycli-cfg-h.json $PAYCLI whoami
-# Balance increased by 50,000,000 (note: msat — this is 50,000 sats).
+$PAYCLI --base-url $LNBITS_URL auth-login \
+    --username admin --password $ADMIN_PASSWORD
 ```
 
-Negative `--amount` debits.
+Then topup. Without `--wallet-id`, paycli targets the active sub-wallet
+of the current config:
+
+```bash
+PAYCLI_CONFIG=/tmp/paycli-cfg-h.json \
+    $PAYCLI topup --amount 50000000
+# → credited 50000000 to wallet <id>
+
+# Or pick a specific sub-wallet:
+PAYCLI_CONFIG=/tmp/paycli-cfg-h.json \
+    $PAYCLI --wallet agentresearch topup --amount 50000000
+
+# Or pass wallet-id directly (legacy):
+WALLET_ID=$(jq -r '.hosted.wallets.default.wallet_id' /tmp/paycli-cfg-h.json)
+PAYCLI_CONFIG=/tmp/paycli-cfg-h.json \
+    $PAYCLI topup --wallet-id $WALLET_ID --amount 50000000
+
+PAYCLI_CONFIG=/tmp/paycli-cfg-h.json $PAYCLI whoami
+# Balance increased.  Negative --amount debits.
+```
 
 ---
 
-## 9 · Cleanup
+## 9 · Inspect the local payment event log
+
+Every state-changing payment command (`register`, `wallets add`,
+`fund`, `pay`, `request` per L402 settlement, `topup`) appends a
+structured row to `~/.paycli/events.jsonl` (or wherever `$PAYCLI_CONFIG`
+points; the log lives next to the config). After running steps 6–8 you
+should see a clean audit trail:
+
+```bash
+$ PAYCLI_CONFIG=/tmp/paycli-cfg-h.json $PAYCLI events
+2026-05-07 …  account_created   [hosted]  wallet=default        ...  memo="username=alice ..."
+2026-05-07 …  account_created   [hosted]  wallet=agentresearch  ...
+2026-05-07 …  account_created   [hosted]  wallet=agenttrading   ...
+2026-05-07 …  invoice_created   [hosted]  wallet=default        amount=+100000000 sat
+2026-05-07 …  l402_paid         [hosted]  wallet=default        status=success ... host=merchant-bob.local
+2026-05-07 …  topup_credit      [hosted]  wallet=default        amount=+50000000 sat status=success
+```
+
+Filtering options:
+
+```bash
+$PAYCLI events --json | jq                 # raw JSONL for tooling
+$PAYCLI events -t l402_paid                # just L402 settlements
+$PAYCLI events -r hosted -s 2026-05-07T00:00:00Z   # today's hosted events
+$PAYCLI events --path                      # print the log path
+PAYCLI_EVENT_LOG=off $PAYCLI fund …        # disable for one call
+```
+
+Cross-tab agents: `paycli events --json | jq -s 'group_by(.wallet_alias) |
+map({alias: .[0].wallet_alias, total: map(.amount) | add})'`.
+
+---
+
+## 10 · Cleanup
 
 ```bash
 pkill -f 'lnbits --port 5002'
