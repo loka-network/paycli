@@ -322,6 +322,33 @@ func (c *Client) CreateWallet(ctx context.Context, userID, name string) (*Hosted
 	return &w, nil
 }
 
+// FiatRate is the response shape of GET /api/v1/rate/<currency>:
+//
+//	{ "rate":  993048659.38,   // native units per 1 fiat unit
+//	                            //   MIST/USD on a SUI deployment,
+//	                            //   sat/USD on a BTC deployment
+//	  "price": 1.007 }          // fiat per 1 whole native unit (USD/SUI or USD/BTC)
+//
+// Whether the deployment is SUI or BTC isn't reported in the body —
+// callers that need the chain label should infer from a fund/pay
+// response's `extra.wallet_sui_rate` vs `extra.wallet_btc_rate`, or
+// from the wallet's own context.
+type FiatRate struct {
+	Rate  float64 `json:"rate"`
+	Price float64 `json:"price"`
+}
+
+// GetRate fetches the oracle's view for the given fiat currency.
+//
+// GET /api/v1/rate/{currency}
+func (c *Client) GetRate(ctx context.Context, currency string) (*FiatRate, error) {
+	var r FiatRate
+	if err := c.do(ctx, http.MethodGet, "/api/v1/rate/"+url.PathEscape(currency), nil, &r, false); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
 // GetWallet returns the wallet referenced by the configured API key.
 // Works with either invoice or admin key, but admin sees more fields.
 //

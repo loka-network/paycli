@@ -1,6 +1,9 @@
 package main
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/loka-network/paycli/pkg/sdk"
 	"github.com/urfave/cli/v2"
 )
@@ -49,7 +52,11 @@ func cmdFund() *cli.Command {
 					Memo:           c.String("memo"),
 					PaymentRequest: pickNonEmpty(p.Bolt11, p.PaymentRequest),
 				})
-				return printJSON(p)
+				if err := printJSON(p); err != nil {
+					return err
+				}
+				printPaymentSummary(p.Amount, p.Extra)
+				return nil
 			case RouteNode:
 				nc, err := nodeClientFromConfig(cfg, "", c.Bool("insecure"))
 				if err != nil {
@@ -122,7 +129,11 @@ func cmdPay() *cli.Command {
 					Preimage:    p.Preimage,
 					Status:      p.Status,
 				})
-				return printJSON(p)
+				if err := printJSON(p); err != nil {
+					return err
+				}
+				printPaymentSummary(p.Amount, p.Extra)
+				return nil
 			case RouteNode:
 				nc, err := nodeClientFromConfig(cfg, "", c.Bool("insecure"))
 				if err != nil {
@@ -217,4 +228,41 @@ func absInt64(x int64) int64 {
 		return -x
 	}
 	return x
+}
+
+// printPaymentSummary writes a one-line "≈ X SUI ≈ Y USD" hint to
+// stderr after a hosted-route fund / pay, so the operator doesn't have
+// to manually divide msat by 10^9 and look up extra.wallet_fiat_amount.
+//
+// amountMsat is what agents-pay-service stores (1 unit = 1 msat for BTC,
+// or — confusingly — 1 unit = 1 millisat-but-actually-1-MIST under the
+// SUI bridge, since lnd-sui keeps the lnrpc field name). chainFromExtra
+// disambiguates by sniffing extra.wallet_(sui|btc)_rate.
+//
+// Best-effort and silent on missing data — never disrupts the user's
+// JSON-parsing pipeline. Any failure path just skips the line.
+func printPaymentSummary(amountMsat int64, extra map[string]interface{}) {
+	chain := chainFromExtra(extra)
+	// agents-pay-service's amount is reported in msat (millisat). The
+	// "whole sub-unit" is sat (BTC) or MIST (SUI), so we divide by 1000
+	// to land in the chain's sub-unit, and again by subPerWhole to land
+	// in the whole unit.
+	subUnits := float64(absInt64(amountMsat)) / 1000.0
+	whole := subUnits / chain.subPerWhole
+
+	var fiat float64
+	var fiatCur string
+	if v, ok := extra["wallet_fiat_amount"].(float64); ok {
+		fiat = v
+	}
+	if v, ok := extra["wallet_fiat_currency"].(string); ok {
+		fiatCur = v
+	}
+
+	if fiatCur != "" && fiat > 0 {
+		fmt.Fprintf(os.Stderr, "≈ %.6f %s  (%.0f %s ≈ %.4f %s)\n",
+			whole, chain.unit, subUnits, chain.subunit, fiat, fiatCur)
+	} else {
+		fmt.Fprintf(os.Stderr, "≈ %.6f %s  (%.0f %s)\n", whole, chain.unit, subUnits, chain.subunit)
+	}
 }

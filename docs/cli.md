@@ -293,6 +293,40 @@ The schema fields:
 | `payment_request` | bolt11 (for invoice_created and l402_paid) |
 | `error` | populated on failure |
 
+### `paycli rate [<currency=USD>]`
+
+Hits `GET /api/v1/rate/<currency>` on agents-pay-service and prints
+the oracle's chain-aware view. On a SUI deployment the labels read
+"USD per SUI" / "MIST per USD"; on BTC they'd read "USD per BTC" /
+"sat per USD". Open endpoint — no key required.
+
+```bash
+$ paycli rate
+currency:    USD
+price:       1.0070 USD per 1 SUI
+rate:        993048659.3843 MIST per 1 USD
+(per quote:  1 USD ≈ 993048659.3843 MIST; 1 SUI ≈ 1.0070 USD)
+
+$ paycli rate EUR
+currency:    EUR
+price:       0.8557 EUR per 1 SUI
+rate:        1168648889.9589 MIST per 1 EUR
+```
+
+After every successful `paycli fund` / `paycli pay`, paycli also
+prints a one-line summary on stderr decoding the msat amount into
+the chain's whole unit + the configured fiat:
+
+```
+$ paycli fund --amount 50000000 --memo demo
+{ ...JSON... }
+≈ 0.050000 SUI  (50000000 MIST ≈ 0.0500 USD)
+```
+
+The chain (SUI vs BTC) is auto-detected from the response's
+`extra.wallet_sui_rate` / `extra.wallet_btc_rate` field, so a single
+paycli binary works against both chain modes of agents-pay-service.
+
 ### `paycli admin-set <key> <value>` (operator)
 
 PATCH a single field on `agents-pay-service`'s admin settings via

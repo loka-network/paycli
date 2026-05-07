@@ -59,6 +59,7 @@ func main() {
 			cmdTopup(),
 			cmdAdminSet(),
 			cmdEvents(),
+			cmdRate(),
 		},
 	}
 
