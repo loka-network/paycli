@@ -12,18 +12,21 @@ import (
 // configKeyMap is the source of truth for `paycli config get/set`. Any new
 // Config field that should be user-mutable goes here.
 //
+// Keys use dotted paths matching the on-disk JSON layout
+// (e.g. `hosted.admin_key`, `node.endpoint`) so the CLI surface mirrors
+// what users see when they cat the file.
+//
 // secret=true masks the value on `config show` so admin keys / macaroon
 // paths don't get pasted into screenshots and tickets.
-//
-// validate runs at set time. Returning an error rejects the new value.
 type configField struct {
-	get      func(*Config) string
-	set      func(*Config, string) error
-	secret   bool
-	help     string
+	get    func(*Config) string
+	set    func(*Config, string) error
+	secret bool
+	help   string
 }
 
 var configFields = map[string]configField{
+	// Top-level ----------------------------------------------------------
 	"route": {
 		get: func(c *Config) string { return string(c.EffectiveRoute()) },
 		set: func(c *Config, v string) error {
@@ -49,57 +52,67 @@ var configFields = map[string]configField{
 		help: "skip TLS verification on the wallet endpoint (true|false)",
 	},
 
-	// Hosted route ------------------------------------------------------
-	"base_url": {
-		get:  func(c *Config) string { return c.BaseURL },
-		set:  func(c *Config, v string) error { c.BaseURL = v; return nil },
+	// Hosted route -------------------------------------------------------
+	"hosted.base_url": {
+		get:  func(c *Config) string { return c.Hosted.BaseURL },
+		set:  func(c *Config, v string) error { c.Hosted.BaseURL = v; return nil },
 		help: "[hosted] agents-pay-service base URL, e.g. https://agents-pay.loka.cash",
 	},
-	"admin_key": {
-		get:    func(c *Config) string { return c.AdminKey },
-		set:    func(c *Config, v string) error { c.AdminKey = v; return nil },
+	"hosted.admin_key": {
+		get:    func(c *Config) string { return c.Hosted.AdminKey },
+		set:    func(c *Config, v string) error { c.Hosted.AdminKey = v; return nil },
 		secret: true,
-		help:   "[hosted] wallet admin key",
+		help:   "[hosted] wallet admin key (X-Api-Key, full spend authority)",
 	},
-	"invoice_key": {
-		get:    func(c *Config) string { return c.InKey },
-		set:    func(c *Config, v string) error { c.InKey = v; return nil },
+	"hosted.invoice_key": {
+		get:    func(c *Config) string { return c.Hosted.InvoiceKey },
+		set:    func(c *Config, v string) error { c.Hosted.InvoiceKey = v; return nil },
 		secret: true,
-		help:   "[hosted] wallet invoice key",
+		help:   "[hosted] wallet invoice key (X-Api-Key, receive-only)",
 	},
-	"wallet_id": {
-		get:  func(c *Config) string { return c.WalletID },
-		set:  func(c *Config, v string) error { c.WalletID = v; return nil },
+	"hosted.wallet_id": {
+		get:  func(c *Config) string { return c.Hosted.WalletID },
+		set:  func(c *Config, v string) error { c.Hosted.WalletID = v; return nil },
 		help: "[hosted] wallet id",
 	},
-	"user_id": {
-		get:  func(c *Config) string { return c.UserID },
-		set:  func(c *Config, v string) error { c.UserID = v; return nil },
+	"hosted.user_id": {
+		get:  func(c *Config) string { return c.Hosted.UserID },
+		set:  func(c *Config, v string) error { c.Hosted.UserID = v; return nil },
 		help: "[hosted] account id (used by add-wallet)",
 	},
-	"admin_bearer_token": {
-		get:    func(c *Config) string { return c.AdminBearerToken },
-		set:    func(c *Config, v string) error { c.AdminBearerToken = v; return nil },
+	"hosted.admin_bearer_token": {
+		get:    func(c *Config) string { return c.Hosted.AdminBearerToken },
+		set:    func(c *Config, v string) error { c.Hosted.AdminBearerToken = v; return nil },
 		secret: true,
-		help:   "[hosted] super-user JWT cached by `auth-login` (used by topup)",
+		help:   "[hosted] super-user JWT cached by `auth-login` (used by topup, admin-set)",
 	},
 
-	// Node route --------------------------------------------------------
-	"node_endpoint": {
-		get:  func(c *Config) string { return c.NodeEndpoint },
-		set:  func(c *Config, v string) error { c.NodeEndpoint = v; return nil },
+	// Node route ---------------------------------------------------------
+	"node.endpoint": {
+		get:  func(c *Config) string { return c.Node.Endpoint },
+		set:  func(c *Config, v string) error { c.Node.Endpoint = v; return nil },
 		help: "[node] lnd REST listener URL, e.g. https://127.0.0.1:8081",
 	},
-	"node_tls_cert_path": {
-		get:  func(c *Config) string { return c.NodeTLSCertPath },
-		set:  func(c *Config, v string) error { c.NodeTLSCertPath = v; return nil },
+	"node.tls_cert_path": {
+		get:  func(c *Config) string { return c.Node.TLSCertPath },
+		set:  func(c *Config, v string) error { c.Node.TLSCertPath = v; return nil },
 		help: "[node] path to lnd's tls.cert",
 	},
-	"node_macaroon_path": {
-		get:  func(c *Config) string { return c.NodeMacaroonPath },
-		set:  func(c *Config, v string) error { c.NodeMacaroonPath = v; return nil },
+	"node.macaroon_path": {
+		get:  func(c *Config) string { return c.Node.MacaroonPath },
+		set:  func(c *Config, v string) error { c.Node.MacaroonPath = v; return nil },
 		help: "[node] path to lnd's admin.macaroon",
 	},
+}
+
+// configKeyOrder is the deterministic listing order for `config show` /
+// `config keys`. Group hosted-then-node so the listing matches the JSON
+// layout the user sees on disk.
+var configKeyOrder = []string{
+	"route", "insecure_tls",
+	"hosted.base_url", "hosted.admin_key", "hosted.invoice_key",
+	"hosted.wallet_id", "hosted.user_id", "hosted.admin_bearer_token",
+	"node.endpoint", "node.tls_cert_path", "node.macaroon_path",
 }
 
 func cmdConfig() *cli.Command {
@@ -127,18 +140,19 @@ func cmdConfig() *cli.Command {
 					if err != nil {
 						return err
 					}
-					out := map[string]string{}
-					for k, f := range configFields {
+					values := make(map[string]string, len(configFields))
+					for _, k := range configKeyOrder {
+						f := configFields[k]
 						v := f.get(cfg)
 						if f.secret && !c.Bool("reveal") {
 							v = maskSecret(v)
 						}
-						out[k] = v
+						values[k] = v
 					}
 					b, _ := json.MarshalIndent(struct {
 						Path   string            `json:"path"`
 						Values map[string]string `json:"values"`
-					}{p, out}, "", "  ")
+					}{p, values}, "", "  ")
 					fmt.Println(string(b))
 					return nil
 				},
@@ -195,21 +209,13 @@ func cmdConfig() *cli.Command {
 				Name:  "keys",
 				Usage: "List all editable config keys with descriptions",
 				Action: func(c *cli.Context) error {
-					// Print in deterministic order, hosted-then-node grouping
-					// so the listing matches the JSON layout the user sees.
-					order := []string{
-						"route", "insecure_tls",
-						"base_url", "admin_key", "invoice_key", "wallet_id", "user_id",
-						"admin_bearer_token",
-						"node_endpoint", "node_tls_cert_path", "node_macaroon_path",
-					}
-					for _, k := range order {
+					for _, k := range configKeyOrder {
 						f := configFields[k]
 						mark := ""
 						if f.secret {
 							mark = " (secret)"
 						}
-						fmt.Printf("  %-22s %s%s\n", k, f.help, mark)
+						fmt.Printf("  %-26s %s%s\n", k, f.help, mark)
 					}
 					return nil
 				},

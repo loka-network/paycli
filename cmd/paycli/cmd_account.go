@@ -46,23 +46,23 @@ func cmdRegister() *cli.Command {
 					return fail("wallet name is required")
 				}
 				if c.String("base-url") != "" {
-					cfg.BaseURL = c.String("base-url")
+					cfg.Hosted.BaseURL = c.String("base-url")
 				}
-				if cfg.BaseURL == "" {
-					cfg.BaseURL = sdk.DefaultBaseURL
+				if cfg.Hosted.BaseURL == "" {
+					cfg.Hosted.BaseURL = sdk.DefaultBaseURL
 				}
-				cl := sdk.New(cfg.BaseURL)
+				cl := sdk.New(cfg.Hosted.BaseURL)
 				if cfg.Insecure {
-					cl = sdk.New(cfg.BaseURL, sdk.WithInsecureTLS())
+					cl = sdk.New(cfg.Hosted.BaseURL, sdk.WithInsecureTLS())
 				}
 				w, err := cl.CreateAccount(c.Context, c.Args().First())
 				if err != nil {
 					return fail("register: %v", err)
 				}
-				cfg.AdminKey = w.AdminKey
-				cfg.InKey = w.InvoiceKey
-				cfg.WalletID = w.ID
-				cfg.UserID = w.User
+				cfg.Hosted.AdminKey = w.AdminKey
+				cfg.Hosted.InvoiceKey = w.InvoiceKey
+				cfg.Hosted.WalletID = w.ID
+				cfg.Hosted.UserID = w.User
 				if err := saveConfig(cfg); err != nil {
 					return fail("save config: %v", err)
 				}
@@ -72,9 +72,9 @@ func cmdRegister() *cli.Command {
 				if c.String("lnd-endpoint") == "" || c.String("lnd-macaroon") == "" {
 					return fail("register --route node requires --lnd-endpoint and --lnd-macaroon (--lnd-tls-cert recommended)")
 				}
-				cfg.NodeEndpoint = c.String("lnd-endpoint")
-				cfg.NodeTLSCertPath = c.String("lnd-tls-cert")
-				cfg.NodeMacaroonPath = c.String("lnd-macaroon")
+				cfg.Node.Endpoint = c.String("lnd-endpoint")
+				cfg.Node.TLSCertPath = c.String("lnd-tls-cert")
+				cfg.Node.MacaroonPath = c.String("lnd-macaroon")
 				if err := saveConfig(cfg); err != nil {
 					return fail("save config: %v", err)
 				}
@@ -122,7 +122,7 @@ func cmdLogin() *cli.Command {
 			}
 			cfg.Route = Route(c.String("route"))
 			if v := c.String("base-url"); v != "" {
-				cfg.BaseURL = v
+				cfg.Hosted.BaseURL = v
 			}
 			if c.Bool("insecure") {
 				cfg.Insecure = true
@@ -131,31 +131,31 @@ func cmdLogin() *cli.Command {
 			switch cfg.Route {
 			case RouteHosted:
 				if v := c.String("admin-key"); v != "" {
-					cfg.AdminKey = v
+					cfg.Hosted.AdminKey = v
 				}
 				if v := c.String("invoice-key"); v != "" {
-					cfg.InKey = v
+					cfg.Hosted.InvoiceKey = v
 				}
 				if v := c.String("wallet-id"); v != "" {
-					cfg.WalletID = v
+					cfg.Hosted.WalletID = v
 				}
 				if v := c.String("user-id"); v != "" {
-					cfg.UserID = v
+					cfg.Hosted.UserID = v
 				}
-				if cfg.AdminKey == "" && cfg.InKey == "" {
+				if cfg.Hosted.AdminKey == "" && cfg.Hosted.InvoiceKey == "" {
 					return fail("login --route hosted requires at least one of --admin-key or --invoice-key")
 				}
 			case RouteNode:
 				if v := c.String("lnd-endpoint"); v != "" {
-					cfg.NodeEndpoint = v
+					cfg.Node.Endpoint = v
 				}
 				if v := c.String("lnd-tls-cert"); v != "" {
-					cfg.NodeTLSCertPath = v
+					cfg.Node.TLSCertPath = v
 				}
 				if v := c.String("lnd-macaroon"); v != "" {
-					cfg.NodeMacaroonPath = v
+					cfg.Node.MacaroonPath = v
 				}
-				if cfg.NodeEndpoint == "" || cfg.NodeMacaroonPath == "" {
+				if cfg.Node.Endpoint == "" || cfg.Node.MacaroonPath == "" {
 					return fail("login --route node requires --lnd-endpoint and --lnd-macaroon")
 				}
 			default:
@@ -228,7 +228,7 @@ func cmdAddWallet() *cli.Command {
 			}
 			userID := c.String("user-id")
 			if userID == "" {
-				userID = cfg.UserID
+				userID = cfg.Hosted.UserID
 			}
 			if userID == "" {
 				return fail("add-wallet: --user-id is required (run `paycli register` first to cache it, or pass it explicitly)")

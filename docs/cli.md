@@ -29,9 +29,36 @@ make install         # → $GOBIN/paycli
 | `--config`   | `PAYCLI_CONFIG`   | Override config file path (default `~/.paycli/config.json`) |
 
 The config file is created on `register` and updated by `login`. It stores
-`route` plus the route-specific fields: hosted (`base_url`, `admin_key`,
-`invoice_key`, `wallet_id`, `user_id`) or node (`node_endpoint`,
-`node_tls_cert_path`, `node_macaroon_path`).
+`route` plus two route-specific sub-objects:
+
+```json
+{
+  "route": "hosted",
+  "insecure_tls": false,
+  "hosted": {
+    "base_url": "...",
+    "admin_key": "...",
+    "invoice_key": "...",
+    "wallet_id": "...",
+    "user_id": "...",
+    "admin_bearer_token": "..."
+  },
+  "node": {
+    "endpoint": "...",
+    "tls_cert_path": "...",
+    "macaroon_path": "..."
+  }
+}
+```
+
+Older paycli builds wrote a flat schema (`base_url`, `admin_key`,
+`node_endpoint`, ... at the top level). Those configs are still loaded
+correctly — paycli folds the legacy fields into the new `hosted` /
+`node` sub-objects on read, and the next `register` / `login` /
+`config set` rewrites the file in the new layout.
+
+Use **dotted keys** like `hosted.admin_key` and `node.endpoint` with
+`paycli config get/set` (run `paycli config keys` for the full list).
 
 ## Commands
 
@@ -115,13 +142,14 @@ config file path.
 
 ### `paycli config get <key>` / `paycli config set <key> <value>`
 
-Edit a single config field without hand-touching JSON. Run
-`paycli config keys` for the full list of editable keys.
+Edit a single config field without hand-touching JSON. Keys are dotted
+paths matching the on-disk JSON layout. Run `paycli config keys` for
+the full list.
 
 ```bash
-paycli config set base_url http://127.0.0.1:5002
+paycli config set hosted.base_url http://127.0.0.1:5002
 paycli config set route node
-paycli config get node_endpoint
+paycli config get node.endpoint
 ```
 
 ### `paycli services --prism-url … --prism-macaroon … [-s X] [--insecure]`

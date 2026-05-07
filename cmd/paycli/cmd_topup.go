@@ -38,10 +38,10 @@ func cmdTopup() *cli.Command {
 			if err != nil {
 				return err
 			}
-			if cfg.AdminBearerToken == "" {
+			if cfg.Hosted.AdminBearerToken == "" {
 				return fail("topup: no super-user token cached — run `paycli auth login --username <name>` first")
 			}
-			baseURL := cfg.BaseURL
+			baseURL := cfg.Hosted.BaseURL
 			if v := c.String("base-url"); v != "" {
 				baseURL = v
 			}
@@ -52,7 +52,7 @@ func cmdTopup() *cli.Command {
 			if c.Bool("insecure") || cfg.Insecure {
 				opts = append(opts, sdk.WithInsecureTLS())
 			}
-			if err := sdk.AdminCreditWallet(c.Context, baseURL, cfg.AdminBearerToken,
+			if err := sdk.AdminCreditWallet(c.Context, baseURL, cfg.Hosted.AdminBearerToken,
 				c.String("wallet-id"), c.Int64("amount"), opts...); err != nil {
 				return fail("topup: %v", err)
 			}
@@ -85,10 +85,10 @@ func cmdAdminSet() *cli.Command {
 			if err != nil {
 				return err
 			}
-			if cfg.AdminBearerToken == "" {
+			if cfg.Hosted.AdminBearerToken == "" {
 				return fail("admin-set: no super-user token cached — run `paycli auth-login --username <name>` first")
 			}
-			baseURL := cfg.BaseURL
+			baseURL := cfg.Hosted.BaseURL
 			if v := c.String("base-url"); v != "" {
 				baseURL = v
 			}
@@ -108,7 +108,7 @@ func cmdAdminSet() *cli.Command {
 				val = raw
 			}
 			body := map[string]interface{}{key: val}
-			if err := sdk.AdminPatchSettings(c.Context, baseURL, cfg.AdminBearerToken, body, opts...); err != nil {
+			if err := sdk.AdminPatchSettings(c.Context, baseURL, cfg.Hosted.AdminBearerToken, body, opts...); err != nil {
 				return fail("admin-set: %v", err)
 			}
 			fmt.Printf("set %s = %v\n", key, val)
@@ -133,7 +133,7 @@ func cmdAuthLogin() *cli.Command {
 			if err != nil {
 				return err
 			}
-			baseURL := cfg.BaseURL
+			baseURL := cfg.Hosted.BaseURL
 			if v := c.String("base-url"); v != "" {
 				baseURL = v
 			}
@@ -158,7 +158,7 @@ func cmdAuthLogin() *cli.Command {
 			if err != nil {
 				return fail("auth-login: %v", err)
 			}
-			cfg.AdminBearerToken = tok
+			cfg.Hosted.AdminBearerToken = tok
 			if err := saveConfig(cfg); err != nil {
 				return fail("save config: %v", err)
 			}

@@ -20,27 +20,47 @@ const (
 	RouteNode   Route = "node"   // self-custody: the user's own lnd / lnd-sui REST gateway
 )
 
-// Config is what we persist at ~/.paycli/config.json. Fields are grouped by
-// route — the irrelevant set is empty when the other route is active.
+// Config is what we persist at ~/.paycli/config.json.
+//
+// Route-specific fields are nested under `Hosted` and `Node` so the
+// active route's settings live together as a sub-object. The on-wire
+// JSON layout is:
+//
+//	{
+//	  "route": "hosted",
+//	  "insecure_tls": false,
+//	  "hosted": { "base_url": "...", "admin_key": "...", ... },
+//	  "node":   { "endpoint": "...", "tls_cert_path": "...", ... }
+//	}
+//
+// Older flat-schema configs (everything at the top level) are still
+// loadable — see loadConfig's compat shim.
 type Config struct {
-	Route    Route  `json:"route,omitempty"` // "" → defaults to hosted
-	Insecure bool   `json:"insecure_tls,omitempty"`
+	Route    Route        `json:"route,omitempty"`        // "" → defaults to hosted
+	Insecure bool         `json:"insecure_tls,omitempty"`
 
-	// Hosted (agents-pay-service) ----------------------------------------
-	BaseURL          string `json:"base_url,omitempty"`
-	AdminKey         string `json:"admin_key,omitempty"`
-	InKey            string `json:"invoice_key,omitempty"`
-	WalletID         string `json:"wallet_id,omitempty"`
-	UserID           string `json:"user_id,omitempty"`
+	Hosted HostedConfig `json:"hosted,omitempty"`
+	Node   NodeConfig   `json:"node,omitempty"`
+}
+
+// HostedConfig groups everything needed for the agents-pay-service custodial route.
+type HostedConfig struct {
+	BaseURL    string `json:"base_url,omitempty"`
+	AdminKey   string `json:"admin_key,omitempty"`
+	InvoiceKey string `json:"invoice_key,omitempty"`
+	WalletID   string `json:"wallet_id,omitempty"`
+	UserID     string `json:"user_id,omitempty"`
 	// AdminBearerToken is the super-user / admin JWT cached by `auth-login`,
-	// used only by `paycli topup`. Distinct from AdminKey (which is a
-	// per-wallet X-Api-Key, not an account-level token).
+	// used by `paycli topup` and `paycli admin-set`. Distinct from AdminKey
+	// (which is a per-wallet X-Api-Key, not an account-level token).
 	AdminBearerToken string `json:"admin_bearer_token,omitempty"`
+}
 
-	// Node (lnd-sui REST gateway) ---------------------------------------
-	NodeEndpoint    string `json:"node_endpoint,omitempty"`     // https://127.0.0.1:8081
-	NodeTLSCertPath string `json:"node_tls_cert_path,omitempty"`
-	NodeMacaroonPath string `json:"node_macaroon_path,omitempty"`
+// NodeConfig groups everything needed for the lnd-sui REST gateway route.
+type NodeConfig struct {
+	Endpoint     string `json:"endpoint,omitempty"`     // https://127.0.0.1:8081
+	TLSCertPath  string `json:"tls_cert_path,omitempty"`
+	MacaroonPath string `json:"macaroon_path,omitempty"`
 }
 
 // EffectiveRoute resolves the route, defaulting to hosted when unset (so
@@ -65,6 +85,53 @@ func configPath() (string, error) {
 	return filepath.Join(home, ".paycli", "config.json"), nil
 }
 
+// flatConfigCompat captures the legacy top-level field layout used by
+// paycli ≤ 2026-05-06. We unmarshal twice — once into Config (new shape),
+// once into this — and fold any non-empty legacy field into the nested
+// equivalent. This way users who registered before the restructure don't
+// have to redo `paycli register`.
+type flatConfigCompat struct {
+	BaseURL          string `json:"base_url,omitempty"`
+	AdminKey         string `json:"admin_key,omitempty"`
+	InvoiceKey       string `json:"invoice_key,omitempty"`
+	WalletID         string `json:"wallet_id,omitempty"`
+	UserID           string `json:"user_id,omitempty"`
+	AdminBearerToken string `json:"admin_bearer_token,omitempty"`
+	NodeEndpoint     string `json:"node_endpoint,omitempty"`
+	NodeTLSCertPath  string `json:"node_tls_cert_path,omitempty"`
+	NodeMacaroonPath string `json:"node_macaroon_path,omitempty"`
+}
+
+func (l *flatConfigCompat) foldInto(c *Config) {
+	if c.Hosted.BaseURL == "" {
+		c.Hosted.BaseURL = l.BaseURL
+	}
+	if c.Hosted.AdminKey == "" {
+		c.Hosted.AdminKey = l.AdminKey
+	}
+	if c.Hosted.InvoiceKey == "" {
+		c.Hosted.InvoiceKey = l.InvoiceKey
+	}
+	if c.Hosted.WalletID == "" {
+		c.Hosted.WalletID = l.WalletID
+	}
+	if c.Hosted.UserID == "" {
+		c.Hosted.UserID = l.UserID
+	}
+	if c.Hosted.AdminBearerToken == "" {
+		c.Hosted.AdminBearerToken = l.AdminBearerToken
+	}
+	if c.Node.Endpoint == "" {
+		c.Node.Endpoint = l.NodeEndpoint
+	}
+	if c.Node.TLSCertPath == "" {
+		c.Node.TLSCertPath = l.NodeTLSCertPath
+	}
+	if c.Node.MacaroonPath == "" {
+		c.Node.MacaroonPath = l.NodeMacaroonPath
+	}
+}
+
 func loadConfig() (*Config, error) {
 	p, err := configPath()
 	if err != nil {
@@ -81,6 +148,12 @@ func loadConfig() (*Config, error) {
 	if err := json.Unmarshal(b, &c); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", p, err)
 	}
+	// Backward compat: read legacy flat fields, fold into new nested
+	// layout if the nested side is empty. A subsequent saveConfig will
+	// re-emit the file in the new layout.
+	var legacy flatConfigCompat
+	_ = json.Unmarshal(b, &legacy)
+	legacy.foldInto(&c)
 	return &c, nil
 }
 
@@ -107,7 +180,7 @@ func hostedClientFromConfig(cfg *Config, baseURLOverride string, insecureOverrid
 	if cfg.EffectiveRoute() != RouteHosted {
 		return nil, fmt.Errorf("active route is %q, this command requires --route hosted", cfg.EffectiveRoute())
 	}
-	baseURL := cfg.BaseURL
+	baseURL := cfg.Hosted.BaseURL
 	if baseURLOverride != "" {
 		baseURL = baseURLOverride
 	}
@@ -120,12 +193,12 @@ func hostedClientFromConfig(cfg *Config, baseURLOverride string, insecureOverrid
 		opts = append(opts, sdk.WithInsecureTLS())
 	}
 	switch {
-	case preferAdmin && cfg.AdminKey != "":
-		opts = append(opts, sdk.WithAdminKey(cfg.AdminKey))
-	case cfg.InKey != "":
-		opts = append(opts, sdk.WithInvoiceKey(cfg.InKey))
-	case cfg.AdminKey != "":
-		opts = append(opts, sdk.WithAdminKey(cfg.AdminKey))
+	case preferAdmin && cfg.Hosted.AdminKey != "":
+		opts = append(opts, sdk.WithAdminKey(cfg.Hosted.AdminKey))
+	case cfg.Hosted.InvoiceKey != "":
+		opts = append(opts, sdk.WithInvoiceKey(cfg.Hosted.InvoiceKey))
+	case cfg.Hosted.AdminKey != "":
+		opts = append(opts, sdk.WithAdminKey(cfg.Hosted.AdminKey))
 	}
 
 	return sdk.New(baseURL, opts...), nil
@@ -136,25 +209,25 @@ func nodeClientFromConfig(cfg *Config, endpointOverride string, insecureOverride
 	if cfg.EffectiveRoute() != RouteNode {
 		return nil, fmt.Errorf("active route is %q, this command requires --route node", cfg.EffectiveRoute())
 	}
-	endpoint := cfg.NodeEndpoint
+	endpoint := cfg.Node.Endpoint
 	if endpointOverride != "" {
 		endpoint = endpointOverride
 	}
 	if endpoint == "" {
 		return nil, errors.New("node endpoint not configured (run `paycli login --route node --lnd-endpoint ...`)")
 	}
-	if cfg.NodeMacaroonPath == "" {
+	if cfg.Node.MacaroonPath == "" {
 		return nil, errors.New("node macaroon path not configured")
 	}
 
 	opts := []sdk.NodeOption{
-		sdk.WithNodeMacaroonFile(cfg.NodeMacaroonPath),
+		sdk.WithNodeMacaroonFile(cfg.Node.MacaroonPath),
 	}
 	switch {
 	case insecureOverride || cfg.Insecure:
 		opts = append(opts, sdk.WithNodeInsecureTLS())
-	case cfg.NodeTLSCertPath != "":
-		opts = append(opts, sdk.WithNodeTLSCertFile(cfg.NodeTLSCertPath))
+	case cfg.Node.TLSCertPath != "":
+		opts = append(opts, sdk.WithNodeTLSCertFile(cfg.Node.TLSCertPath))
 	}
 	return sdk.NewNodeClient(endpoint, opts...)
 }
