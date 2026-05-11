@@ -198,9 +198,10 @@ paycli login --route node \
 (node-mode `GetInfo` against lnd-sui devnet sometimes errors with the
 chain-backend's pprof page — see `docs/sdk.md#known-issue-with-lnd-sui-devnet`.)
 
-### `paycli fund --amount N [--unit sat|mist|sui|<fiat>] [--memo …] [--expiry seconds]`
+### `paycli fund --amount N [--unit sat|mist|sui|<fiat>] [--memo …] [--expiry seconds] [--via stripe|paypal] [--open]`
 
-Generate a BOLT11 invoice for receiving funds into the active wallet.
+Generate a BOLT11 invoice (or fiat checkout URL) for receiving funds
+into the active wallet.
 
 `--unit` controls how `--amount` is interpreted:
 
@@ -226,7 +227,30 @@ think in SUI.
 ```bash
 paycli fund --amount 0.1 --unit sui --memo "topup"   # 0.1 SUI
 paycli fund --amount 100000000 --memo "topup"        # 100M MIST (same)
-paycli fund --amount 0.10 --unit USD --memo "topup"  # hosted-route oracle
+paycli fund --amount 0.10 --unit USD --memo "topup"  # hosted-route oracle: USD → sat → BOLT11
+```
+
+**Fiat onramp (Stripe / PayPal): `--via {stripe,paypal}`**
+
+When `--via` is set, the server skips minting a BOLT11 and instead asks
+the configured fiat provider to create a hosted checkout session. The
+response's `payment_request` field is the **checkout URL** (not a
+BOLT11). After the user pays at the provider's page, the server's
+webhook (`/api/v1/callback/{stripe,paypal}`) verifies the event and
+credits the active sub-wallet without ever touching lnd.
+
+Constraints:
+- Hosted route only (node mode has no fiat backend).
+- `--unit` must be a fiat code; `sat` / `mist` / `sui` are rejected
+  client-side.
+- The named provider must be enabled in the server's admin settings —
+  see [`docs/fiat-onramp.md`](./fiat-onramp.md) for the operator setup
+  (enabling the provider, getting API + webhook secrets, registering
+  the webhook URL).
+
+```bash
+paycli fund --amount 5    --unit USD --via stripe              # → Stripe checkout URL
+paycli fund --amount 9.99 --unit USD --via paypal --open       # → PayPal approve_url, opens browser
 ```
 
 ### `paycli pay <bolt11>`

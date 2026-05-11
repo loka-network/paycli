@@ -3,6 +3,9 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"runtime"
+	"strings"
 
 	"github.com/loka-network/paycli/pkg/sdk"
 	"github.com/urfave/cli/v2"
@@ -11,17 +14,29 @@ import (
 func cmdFund() *cli.Command {
 	return &cli.Command{
 		Name:  "fund",
-		Usage: "Generate a BOLT11 invoice to receive funds into the active wallet",
+		Usage: "Generate a BOLT11 invoice (or fiat checkout URL via --via) to receive funds into the active wallet",
 		Flags: []cli.Flag{
 			&cli.Float64Flag{Name: "amount", Aliases: []string{"a"}, Required: true, Usage: "amount in --unit (e.g. `--amount 0.1 --unit sui` or `--amount 1000 --unit sat`)"},
 			&cli.StringFlag{Name: "memo", Aliases: []string{"m"}, Usage: "human-readable memo"},
 			&cli.StringFlag{Name: "unit", Value: "sat", Usage: "amount unit: sat | mist (sub-unit), sui (whole, multiplies by 1e9), or a fiat code (USD/EUR/...) for server-side oracle conversion"},
 			&cli.IntFlag{Name: "expiry", Usage: "invoice TTL seconds"},
+			&cli.StringFlag{Name: "via", Usage: "fiat onramp provider: stripe | paypal — hosted route only; --unit must be a fiat code (USD/EUR/...). Server returns a checkout URL instead of a BOLT11; webhook credits the wallet on payment."},
+			&cli.BoolFlag{Name: "open", Usage: "open the fiat checkout URL in the default browser when --via is set"},
 		},
 		Action: func(c *cli.Context) error {
 			cfg, err := loadConfig()
 			if err != nil {
 				return err
+			}
+			via := strings.ToLower(c.String("via"))
+			if via != "" {
+				if cfg.EffectiveRoute() != RouteHosted {
+					return fail("fund: --via requires hosted route (node mode has no fiat backend)")
+				}
+				switch strings.ToLower(c.String("unit")) {
+				case "sat", "mist", "sui":
+					return fail("fund: --via %s requires --unit to be a fiat code (USD/EUR/...), got %q", via, c.String("unit"))
+				}
 			}
 			subAmount, serverUnit, err := resolveAmount(c.Float64("amount"), c.String("unit"))
 			if err != nil {
@@ -34,17 +49,23 @@ func cmdFund() *cli.Command {
 					return err
 				}
 				p, err := cl.CreateInvoice(c.Context, sdk.CreateInvoiceRequest{
-					Amount: subAmount,
-					Memo:   c.String("memo"),
-					Unit:   serverUnit,
-					Expiry: c.Int("expiry"),
+					Amount:       subAmount,
+					Memo:         c.String("memo"),
+					Unit:         serverUnit,
+					Expiry:       c.Int("expiry"),
+					FiatProvider: via,
 				})
 				if err != nil {
 					return fail("fund: %v", err)
 				}
 				_, w, _ := cfg.Hosted.ResolveWallet(walletAlias)
+				eventKind := EventInvoiceCreated
+				memo := c.String("memo")
+				if via != "" {
+					memo = fmt.Sprintf("fiat-onramp via=%s currency=%s amount=%v %s", via, serverUnit, subAmount, memo)
+				}
 				LogEvent(Event{
-					Event:          EventInvoiceCreated,
+					Event:          eventKind,
 					Route:          string(RouteHosted),
 					Endpoint:       cl.BaseURL,
 					WalletAlias:    walletAlias,
@@ -53,13 +74,37 @@ func cmdFund() *cli.Command {
 					Amount:         subAmount,
 					Unit:           serverUnit,
 					PaymentHash:    p.PaymentHash,
-					Memo:           c.String("memo"),
+					Memo:           memo,
 					PaymentRequest: pickNonEmpty(p.Bolt11, p.PaymentRequest),
 				})
 				if err := printJSON(p); err != nil {
 					return err
 				}
-				printPaymentSummary(p.Amount, p.Extra)
+				if via != "" {
+					// Fiat path: p.PaymentRequest is a checkout URL (Stripe Session,
+					// PayPal approve_url, ...) populated server-side from
+					// extra.fiat_payment_request. Highlight it on stderr so it isn't
+					// lost in the JSON dump above.
+					url := p.PaymentRequest
+					fmt.Fprintln(os.Stderr)
+					if url == "" {
+						fmt.Fprintf(os.Stderr,
+							"%s onramp accepted but the server returned no checkout URL — check that fiat_provider is enabled and configured in admin settings.\n",
+							strings.ToUpper(via))
+					} else {
+						fmt.Fprintf(os.Stderr, "%s checkout URL:\n  %s\n", strings.ToUpper(via), url)
+						fmt.Fprintf(os.Stderr,
+							"After paying, the active wallet %q is credited via the %s webhook (server endpoint: /api/v1/callback/%s).\n",
+							walletAlias, via, via)
+						if c.Bool("open") {
+							if err := openBrowser(url); err != nil {
+								fmt.Fprintf(os.Stderr, "(could not auto-open browser: %v)\n", err)
+							}
+						}
+					}
+				} else {
+					printPaymentSummary(p.Amount, p.Extra)
+				}
 				return nil
 			case RouteNode:
 				nc, err := nodeClientFromConfig(cfg, "", c.Bool("insecure"))
@@ -275,4 +320,20 @@ func printPaymentSummary(amountMsat int64, extra map[string]interface{}) {
 	} else {
 		fmt.Fprintf(os.Stderr, "≈ %.6f %s  (%.0f %s)\n", whole, chain.unit, subUnits, chain.subunit)
 	}
+}
+
+// openBrowser opens url in the user's default browser. Used by `fund --via …
+// --open` so the operator can click straight through to the Stripe / PayPal
+// checkout page without copying the URL out of the JSON dump.
+func openBrowser(url string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "windows":
+		cmd = exec.Command("cmd", "/c", "start", "", url)
+	default:
+		cmd = exec.Command("xdg-open", url)
+	}
+	return cmd.Start()
 }
