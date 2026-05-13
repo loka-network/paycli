@@ -160,7 +160,7 @@ var configKeyOrder = []string{
 func cmdConfig() *cli.Command {
 	return &cli.Command{
 		Name:  "config",
-		Usage: "View and edit ~/.paycli/config.json without hand-editing JSON",
+		Usage: "View and edit ~/.lokapay/config.json without hand-editing JSON",
 		Subcommands: []*cli.Command{
 			{
 				Name:  "show",
@@ -222,7 +222,7 @@ func cmdConfig() *cli.Command {
 			},
 			{
 				Name:      "set",
-				Usage:     "Update a config value (writes ~/.paycli/config.json)",
+				Usage:     "Update a config value (writes ~/.lokapay/config.json)",
 				ArgsUsage: "<key> <value>",
 				Action: func(c *cli.Context) error {
 					if c.NArg() < 2 {

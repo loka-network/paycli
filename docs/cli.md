@@ -28,7 +28,7 @@ lokapay init          # interactive setup wizard
 
 `init` walks you through endpoint pick (defaults to
 `https://agents-pay.loka.cash`), register-new vs import-existing-keys,
-and writes `~/.paycli/config.json`. Re-running on an existing config
+and writes `~/.lokapay/config.json`. Re-running on an existing config
 offers backup / abort / overwrite.
 
 For the **node** route (self-hosted lnd-sui), the wizard's guided path
@@ -39,14 +39,14 @@ nodes, and registers all the resulting paths in your config. Skip the
 wizard and drive it directly when scripting:
 
 ```bash
-lokapay node install                                       # → ~/.paycli/lnd/<version>/bin/{lnd,lncli}
+lokapay node install                                       # → ~/.lokapay/lnd/<version>/bin/{lnd,lncli}
 lokapay node start --network devnet --faucet --connect-seeds
 lokapay node status                                        # pid + pubkey + balance + peers
 lokapay node logs -f                                       # tail lnd.log
 lokapay node stop                                          # graceful (lncli stop) + SIGTERM fallback
 ```
 
-Storage layout under `~/.paycli/`: `lnd/<version>/bin/` for binaries,
+Storage layout under `~/.lokapay/`: `lnd/<version>/bin/` for binaries,
 `lnd-data/` for the data dir (logs, pid, tls.cert, macaroon). Every
 step the wizard does is also reachable as an individual command
 (`register`, `login`, `node …`, `config set`, …) — see below if you'd
@@ -58,7 +58,7 @@ rather drive it manually or script the setup.
 |---|---|---|
 | `--base-url` | `PAYCLI_BASE_URL` | Override the agents-pay-service base URL |
 | `--insecure` | `PAYCLI_INSECURE` | Skip TLS verification on the wallet endpoint |
-| `--config`   | `PAYCLI_CONFIG`   | Override config file path (default `~/.paycli/config.json`) |
+| `--config`   | `PAYCLI_CONFIG`   | Override config file path (default `~/.lokapay/config.json`) |
 
 ## Multi-wallet model (hosted route)
 
@@ -349,7 +349,7 @@ config. Required before `lokapay topup`. Password may be supplied via
 
 ### `lokapay events [-n N] [-t TYPE] [-r ROUTE] [-s RFC3339] [--json] [--path]`
 
-Show the local payment event log at `~/.paycli/events.jsonl`. Every
+Show the local payment event log at `~/.lokapay/events.jsonl`. Every
 state-changing payment command — `register` (hosted), `fund`, `pay`,
 `request` (per L402 settlement), `topup` — appends one structured row
 to this file as it runs.

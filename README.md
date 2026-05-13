@@ -66,7 +66,7 @@ bin/lokapay request -H "Host: service1.com" --insecure-target -i \
     https://127.0.0.1:8080/freebieservice    # same command, different backend
 ```
 
-Config lives at `~/.paycli/config.json` (override with `$PAYCLI_CONFIG`).
+Config lives at `~/.lokapay/config.json` (override with `$PAYCLI_CONFIG`).
 Switching routes is just `paycli login --route ...` — config remembers
 which one is active.
 

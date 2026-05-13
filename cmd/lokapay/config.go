@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/loka-network/paycli/pkg/sdk"
 )
@@ -20,7 +22,7 @@ const (
 	RouteNode   Route = "node"   // self-custody: the user's own lnd / lnd-sui REST gateway
 )
 
-// Config is what we persist at ~/.paycli/config.json.
+// Config is what we persist at ~/.lokapay/config.json.
 //
 // Route-specific fields are nested under `Hosted` and `Node`. The hosted
 // block now models the LNbits domain accurately:
@@ -172,7 +174,46 @@ func configPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".paycli", "config.json"), nil
+	migrateLegacyConfigDirOnce(home)
+	return filepath.Join(home, ".lokapay", "config.json"), nil
+}
+
+// migrateLegacyConfigDir is the one-shot rename for users upgrading from
+// the pre-rename build (binary was `paycli`, config dir was
+// `~/.paycli/`). Runs once per process via the sync.Once below.
+//
+// Conditions for action: old dir present, new dir absent. Anything else
+// (both present / new present / neither present) is a no-op so the
+// migration never clobbers state, even if the user partially renamed by
+// hand. We also rewrite "/.paycli/" → "/.lokapay/" inside the moved
+// config.json so cached paths like NodeConfig.LndBinaryPath keep
+// resolving after the directory move.
+var migrateOnce sync.Once
+
+func migrateLegacyConfigDirOnce(home string) {
+	migrateOnce.Do(func() {
+		oldDir := filepath.Join(home, ".paycli")
+		newDir := filepath.Join(home, ".lokapay")
+		if _, err := os.Stat(oldDir); err != nil {
+			return
+		}
+		if _, err := os.Stat(newDir); err == nil {
+			return
+		}
+		if err := os.Rename(oldDir, newDir); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not migrate %s → %s: %v\n", oldDir, newDir, err)
+			return
+		}
+		// Patch baked-in paths inside the migrated config.json.
+		cfgPath := filepath.Join(newDir, "config.json")
+		if b, err := os.ReadFile(cfgPath); err == nil {
+			patched := bytes.ReplaceAll(b, []byte("/.paycli/"), []byte("/.lokapay/"))
+			if !bytes.Equal(b, patched) {
+				_ = os.WriteFile(cfgPath, patched, 0o600)
+			}
+		}
+		fmt.Fprintf(os.Stderr, "→ migrated config dir %s → %s\n", oldDir, newDir)
+	})
 }
 
 // flatConfigCompat captures the legacy on-disk layouts: both the

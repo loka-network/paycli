@@ -9,14 +9,14 @@ import (
 	"github.com/urfave/cli/v2"
 )
 
-// cmdEvents reads ~/.paycli/events.jsonl and prints a filtered view —
+// cmdEvents reads ~/.lokapay/events.jsonl and prints a filtered view —
 // the audit trail every payment command has been writing to behind the
 // scenes since this revision. Default output is one event per line in
 // human-friendly form; --json dumps the raw JSONL for machine consumers.
 func cmdEvents() *cli.Command {
 	return &cli.Command{
 		Name:  "events",
-		Usage: "Show the local payment event log (~/.paycli/events.jsonl)",
+		Usage: "Show the local payment event log (~/.lokapay/events.jsonl)",
 		Flags: []cli.Flag{
 			&cli.IntFlag{Name: "limit", Aliases: []string{"n"}, Value: 20, Usage: "show last N events (0 = all)"},
 			&cli.StringFlag{Name: "type", Aliases: []string{"t"}, Usage: "filter by event type (account_created | invoice_created | pay_sent | l402_paid | topup_credit)"},

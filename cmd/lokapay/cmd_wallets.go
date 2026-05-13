@@ -36,7 +36,7 @@ func cmdWallets() *cli.Command {
 func cmdWalletsList() *cli.Command {
 	return &cli.Command{
 		Name:  "list",
-		Usage: "List sub-wallets recorded in ~/.paycli/config.json",
+		Usage: "List sub-wallets recorded in ~/.lokapay/config.json",
 		Flags: []cli.Flag{
 			&cli.BoolFlag{Name: "json", Usage: "raw JSON output"},
 		},
@@ -99,7 +99,7 @@ func cmdWalletsAdd() *cli.Command {
 		Usage:     "Create a sub-wallet on the server and persist its keys locally",
 		ArgsUsage: "<name>",
 		Description: "Calls POST /api/v1/wallet with the cached super-user JWT (run `lokapay auth-login` or `lokapay register --username`).\n" +
-			"The new wallet's admin / invoice X-Api-Keys are saved to ~/.paycli/config.json under the alias <name>.\n" +
+			"The new wallet's admin / invoice X-Api-Keys are saved to ~/.lokapay/config.json under the alias <name>.\n" +
 			"<name> is the LOCAL alias lokapay uses (also sent to the server as the wallet's display name).",
 		Flags: []cli.Flag{
 			&cli.BoolFlag{Name: "use", Usage: "also switch active_wallet to the newly-created entry"},
@@ -235,7 +235,7 @@ func cmdWalletsRemove() *cli.Command {
 		Name:      "remove",
 		Usage:     "Drop a wallet entry from the local config (no server-side delete)",
 		ArgsUsage: "<name>",
-		Description: "Removes the alias from ~/.paycli/config.json. The wallet keeps existing on the server and could be re-imported via `lokapay wallets add` (which would re-create it with new keys, not the same ones — there's no server-side rename API in lnbits).",
+		Description: "Removes the alias from ~/.lokapay/config.json. The wallet keeps existing on the server and could be re-imported via `lokapay wallets add` (which would re-create it with new keys, not the same ones — there's no server-side rename API in lnbits).",
 		Action: func(c *cli.Context) error {
 			if c.NArg() < 1 {
 				return fail("wallets remove: <name> is required")

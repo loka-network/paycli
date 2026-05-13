@@ -28,12 +28,12 @@ import (
 func cmdInit() *cli.Command {
 	return &cli.Command{
 		Name:  "init",
-		Usage: "Interactive setup wizard — pick endpoint, register or log in, save ~/.paycli/config.json",
+		Usage: "Interactive setup wizard — pick endpoint, register or log in, save ~/.lokapay/config.json",
 		Description: "Walks first-time users through lokapay setup:\n" +
 			"  1. choose hosted (custodial) or node (self-hosted) route\n" +
 			"  2. pick an endpoint — defaults to https://agents-pay.loka.cash for hosted\n" +
 			"  3. register a new named account or persist existing keys\n" +
-			"  4. write ~/.paycli/config.json and probe the endpoint\n\n" +
+			"  4. write ~/.lokapay/config.json and probe the endpoint\n\n" +
 			"Re-running on an existing config offers backup / abort / overwrite.",
 		Flags: []cli.Flag{
 			&cli.BoolFlag{Name: "yes", Aliases: []string{"y"}, Usage: "overwrite an existing config without prompting (backup is still written)"},

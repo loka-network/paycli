@@ -82,7 +82,7 @@ var SuiNetworkConfigs = map[SuiNetwork]SuiNetworkConfig{
 // so they can persist the binary paths in lokapay config.
 type LndInstallResult struct {
 	Version   string
-	BinDir    string // e.g. ~/.paycli/lnd/v0.21.0/bin
+	BinDir    string // e.g. ~/.lokapay/lnd/v0.21.0/bin
 	LndPath   string // BinDir + "/lnd"  (".exe" on windows)
 	LncliPath string // BinDir + "/lncli"
 }
@@ -92,7 +92,7 @@ type LndInstallResult struct {
 // binary paths. If force=false and the binaries already exist for that
 // version, it short-circuits and returns the existing paths.
 //
-// destRoot is typically ~/.paycli/lnd. version may be either a plain
+// destRoot is typically ~/.lokapay/lnd. version may be either a plain
 // "v0.21.0" or "latest" (which calls the GitHub API to resolve).
 //
 // progress, if non-nil, receives one-line status updates (download

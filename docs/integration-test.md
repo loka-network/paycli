@@ -205,7 +205,7 @@ real `block_height` instead of the pprof body.
 ```bash
 # 1. create a fresh wallet
 lokapay --base-url http://127.0.0.1:5002 register "it-funded"
-ADMIN=$(jq -r .admin_key ~/.paycli/config.json)
+ADMIN=$(jq -r .admin_key ~/.lokapay/config.json)
 
 # 2. issue a topup invoice
 INV=$(lokapay fund --amount 1000000 --memo it-topup | jq -r .bolt11)

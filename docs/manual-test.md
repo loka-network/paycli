@@ -17,7 +17,7 @@ Last verified: 2026-05-07 against the local devnet.
 - A demo user account with three sub-wallets (one default, two
   per-agent) — exercises the multi-wallet model
 - Confirmed L402 payments through Prism on both routes
-- Structured payment audit trail at `~/.paycli/events.jsonl`
+- Structured payment audit trail at `~/.lokapay/events.jsonl`
 
 ## Prerequisites
 
@@ -491,7 +491,7 @@ PAYCLI_CONFIG=/tmp/paycli-cfg-h.json $PAYCLI whoami
 
 Every state-changing payment command (`register`, `wallets add`,
 `fund`, `pay`, `request` per L402 settlement, `topup`) appends a
-structured row to `~/.paycli/events.jsonl` (or wherever `$PAYCLI_CONFIG`
+structured row to `~/.lokapay/events.jsonl` (or wherever `$PAYCLI_CONFIG`
 points; the log lives next to the config). After running steps 6–8 you
 should see a clean audit trail:
 

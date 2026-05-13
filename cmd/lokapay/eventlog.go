@@ -18,7 +18,7 @@ const (
 	EventTopupCredit    = "topup_credit"    // operator topup: synthetic credit
 )
 
-// Event is one structured row in ~/.paycli/events.jsonl. Fields are
+// Event is one structured row in ~/.lokapay/events.jsonl. Fields are
 // kept omitempty so a single struct fits every event type without
 // littering the log with empty strings.
 //

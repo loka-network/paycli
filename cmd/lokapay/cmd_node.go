@@ -25,7 +25,7 @@ import (
 // for downloading + running a local loka-lnd against the Sui chain
 // backend without the operator having to clone the source repo.
 //
-// All state lives under ~/.paycli/{lnd,lnd-data}/. The flow follows
+// All state lives under ~/.lokapay/{lnd,lnd-data}/. The flow follows
 // loka-agentic-payment SKILL.md: install binaries → start with the
 // right --suinode flags → optionally hit the devnet faucet → optionally
 // connect to the Loka seed nodes → register paths in lokapay config so
@@ -86,7 +86,7 @@ func cmdNodeStart() *cli.Command {
 		Usage: "Boot the installed loka-lnd against a Sui chain, write its paths into lokapay config",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "network", Value: string(sdk.NetworkDevnet), Usage: "sui chain to connect to: devnet | testnet | mainnet"},
-			&cli.StringFlag{Name: "lnddir", Usage: "lnd data directory (default ~/.paycli/lnd-data)"},
+			&cli.StringFlag{Name: "lnddir", Usage: "lnd data directory (default ~/.lokapay/lnd-data)"},
 			&cli.StringFlag{Name: "package-id", Usage: "override the auto-resolved Sui Lightning Move package ID"},
 			&cli.IntFlag{Name: "rpc-port", Value: 10009, Usage: "lnd gRPC port"},
 			&cli.IntFlag{Name: "rest-port", Value: 8081, Usage: "lnd REST port"},
@@ -529,7 +529,7 @@ func lokapayLndRoot() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("home dir: %w", err)
 	}
-	return filepath.Join(home, ".paycli", "lnd"), nil
+	return filepath.Join(home, ".lokapay", "lnd"), nil
 }
 
 func lokapayLndDataDir() (string, error) {
@@ -537,7 +537,7 @@ func lokapayLndDataDir() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("home dir: %w", err)
 	}
-	return filepath.Join(home, ".paycli", "lnd-data"), nil
+	return filepath.Join(home, ".lokapay", "lnd-data"), nil
 }
 
 func waitForRPC(ctx context.Context, addr string, timeout time.Duration) error {
