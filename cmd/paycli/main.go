@@ -46,6 +46,7 @@ func main() {
 		},
 		Commands: []*cli.Command{
 			cmdInit(),
+			cmdNode(),
 			cmdRegister(),
 			cmdLogin(),
 			cmdWhoami(),

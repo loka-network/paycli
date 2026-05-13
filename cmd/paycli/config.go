@@ -89,10 +89,24 @@ type WalletEntry struct {
 }
 
 // NodeConfig groups everything needed for the lnd-sui REST gateway route.
+//
+// Endpoint / TLSCertPath / MacaroonPath are the original "point at an
+// already-running lnd" fields. The remaining fields are populated by
+// `paycli node install` + `paycli node start` when paycli is managing
+// a local lnd itself; they're optional and harmless for the
+// external-lnd workflow.
 type NodeConfig struct {
 	Endpoint     string `json:"endpoint,omitempty"`
 	TLSCertPath  string `json:"tls_cert_path,omitempty"`
 	MacaroonPath string `json:"macaroon_path,omitempty"`
+
+	// Managed-lnd fields — populated by `paycli node install/start`.
+	LndBinaryPath   string `json:"lnd_binary_path,omitempty"`
+	LncliBinaryPath string `json:"lncli_binary_path,omitempty"`
+	LndDir          string `json:"lnd_dir,omitempty"`            // --lnddir target (and where logs / PID live)
+	LndVersion      string `json:"lnd_version,omitempty"`        // e.g. "v0.21.0", for upgrade tracking
+	Network         string `json:"network,omitempty"`            // "devnet" | "testnet" | "mainnet"
+	PackageID       string `json:"package_id,omitempty"`         // resolved at start time, cached so paycli node status doesn't need network
 }
 
 // ResolveWallet returns the wallet entry paycli should use for a command.

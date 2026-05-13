@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -193,10 +194,102 @@ func wizardHostedLoginKeys(ctx context.Context, cfg *Config) error {
 	return nil
 }
 
-// wizardNode handles the self-hosted lnd route. Probes the node with
-// GetInfo so users learn immediately if the endpoint / macaroon is
-// wrong rather than at next `paycli pay`.
+// wizardNode handles the self-hosted lnd route. Two sub-flows:
+//
+//	guided — paycli downloads loka-lnd, starts it against Sui
+//	         devnet/testnet, optionally hits the faucet + connects to
+//	         Loka seed nodes, then writes everything into the config
+//	         (delegates to `paycli node install` + `paycli node start`)
+//	manual — point paycli at an already-running lnd by typing the
+//	         endpoint + tls cert + macaroon paths
 func wizardNode(ctx context.Context, cfg *Config) error {
+	mode, err := promptNodeMode()
+	if err != nil {
+		return err
+	}
+	if mode == "guided" {
+		return wizardNodeGuided(ctx, cfg)
+	}
+	return wizardNodeManual(ctx, cfg)
+}
+
+// wizardNodeGuided downloads + starts a managed lnd. Mirrors the steps
+// in loka-agentic-payment SKILL.md, gated by a few prompts so the user
+// confirms network + bootstrap actions.
+func wizardNodeGuided(ctx context.Context, cfg *Config) error {
+	network, doFaucet, doSeeds, err := promptNodeGuided()
+	if err != nil {
+		return err
+	}
+
+	destRoot, err := paycliLndRoot()
+	if err != nil {
+		return err
+	}
+	res, err := sdk.DownloadAndExtractLnd(ctx, destRoot, sdk.DefaultLndVersion, false, os.Stderr)
+	if err != nil {
+		return fail("init: download lnd: %v", err)
+	}
+	cfg.Node.LndBinaryPath = res.LndPath
+	cfg.Node.LncliBinaryPath = res.LncliPath
+	cfg.Node.LndVersion = res.Version
+	if err := saveConfig(cfg); err != nil {
+		return fail("save config: %v", err)
+	}
+
+	pkgID, err := sdk.FetchSuiPackageID(ctx, network, res.Version)
+	if err != nil {
+		return fail("init: resolve package id: %v", err)
+	}
+	fmt.Fprintf(os.Stderr, "  sui %s package_id: %s\n", network, pkgID)
+
+	lndDir, err := paycliLndDataDir()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(lndDir, 0o700); err != nil {
+		return fail("mkdir %s: %v", lndDir, err)
+	}
+	if alreadyRunning(lndDir) {
+		fmt.Fprintf(os.Stderr, "ℹ lnd already running at %s — skipping spawn; will reuse\n", lndDir)
+	} else {
+		netCfg := sdk.SuiNetworkConfigs[network]
+		if err := spawnManagedLnd(ctx, cfg, lndDir, network, netCfg, pkgID, defaultManagedLndPorts, 30*time.Second); err != nil {
+			return fail("init: spawn lnd: %v", err)
+		}
+	}
+
+	cfg.Node.Endpoint = "https://127.0.0.1:8081"
+	cfg.Node.TLSCertPath = filepath.Join(lndDir, "tls.cert")
+	cfg.Node.MacaroonPath = filepath.Join(lndDir, "data", "chain", "sui", string(network), "admin.macaroon")
+	cfg.Node.LndDir = lndDir
+	cfg.Node.Network = string(network)
+	cfg.Node.PackageID = pkgID
+	cfg.Insecure = true
+	if err := saveConfig(cfg); err != nil {
+		return fail("save config: %v", err)
+	}
+
+	if doFaucet {
+		if err := fundWalletFromFaucet(ctx, cfg, sdk.SuiNetworkConfigs[network]); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: faucet bootstrap failed: %v\n", err)
+		}
+	}
+	if doSeeds {
+		connectSeeds(ctx, cfg)
+	}
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "✓ node ready")
+	fmt.Fprintf(os.Stderr, "  network:   %s\n  endpoint:  %s\n  lnddir:    %s\n", network, cfg.Node.Endpoint, lndDir)
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Next:")
+	fmt.Fprintln(os.Stderr, "  paycli node status        # confirm pubkey + balance")
+	fmt.Fprintln(os.Stderr, "  paycli whoami             # via the saved node config")
+	return nil
+}
+
+func wizardNodeManual(ctx context.Context, cfg *Config) error {
 	endpoint, tlsCert, macaroon, insecure, err := promptNodeEndpoint(cfg.Node.Endpoint, cfg.Node.TLSCertPath, cfg.Node.MacaroonPath)
 	if err != nil {
 		return err
@@ -371,6 +464,60 @@ func promptLoginKeys() (adminKey, invoiceKey, walletAlias, walletID, userID stri
 		return
 	}
 	return
+}
+
+func promptNodeMode() (string, error) {
+	choice := ""
+	err := survey.AskOne(&survey.Select{
+		Message: "Node setup:",
+		Options: []string{"guided", "manual"},
+		Default: "guided",
+		Description: func(value string, _ int) string {
+			switch value {
+			case "guided":
+				return "paycli downloads loka-lnd, starts it against Sui, configures itself"
+			case "manual":
+				return "I already have an lnd running — just enter endpoint + paths"
+			}
+			return ""
+		},
+	}, &choice)
+	return choice, err
+}
+
+func promptNodeGuided() (sdk.SuiNetwork, bool, bool, error) {
+	netChoice := ""
+	if err := survey.AskOne(&survey.Select{
+		Message: "Sui chain:",
+		Options: []string{string(sdk.NetworkDevnet), string(sdk.NetworkTestnet)},
+		Default: string(sdk.NetworkDevnet),
+		Description: func(value string, _ int) string {
+			switch value {
+			case string(sdk.NetworkDevnet):
+				return "fastest reset cadence; daily resets, faucet available"
+			case string(sdk.NetworkTestnet):
+				return "longer-lived; faucet available; closer to mainnet semantics"
+			}
+			return ""
+		},
+	}, &netChoice); err != nil {
+		return "", false, false, err
+	}
+	doFaucet := false
+	if err := survey.AskOne(&survey.Confirm{
+		Message: "Request test SUI from the faucet after start?",
+		Default: true,
+	}, &doFaucet); err != nil {
+		return "", false, false, err
+	}
+	doSeeds := false
+	if err := survey.AskOne(&survey.Confirm{
+		Message: "Connect to Loka EU + US seed nodes after start?",
+		Default: true,
+	}, &doSeeds); err != nil {
+		return "", false, false, err
+	}
+	return sdk.SuiNetwork(netChoice), doFaucet, doSeeds, nil
 }
 
 func promptNodeEndpoint(curEndpoint, curTLS, curMac string) (endpoint, tlsCert, macaroon string, insecure bool, err error) {

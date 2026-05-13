@@ -23,7 +23,7 @@ make install         # → $GOBIN/paycli
 ## Quick start
 
 ```bash
-paycli init          # interactive setup wizard (recommended for new users)
+paycli init          # interactive setup wizard
 ```
 
 `init` walks you through endpoint pick (defaults to
@@ -31,9 +31,26 @@ paycli init          # interactive setup wizard (recommended for new users)
 and writes `~/.paycli/config.json`. Re-running on an existing config
 offers backup / abort / overwrite.
 
-Every step the wizard does is also reachable as an individual command
-(`register`, `login`, `config set`, …) — see below if you'd rather drive
-it manually or script the setup.
+For the **node** route (self-hosted lnd-sui), the wizard's guided path
+delegates to `paycli node install` + `paycli node start` — it downloads
+the loka-lnd release for your platform, boots it against Sui devnet
+or testnet, optionally hits the faucet + connects to the Loka seed
+nodes, and registers all the resulting paths in your config. Skip the
+wizard and drive it directly when scripting:
+
+```bash
+paycli node install                                       # → ~/.paycli/lnd/<version>/bin/{lnd,lncli}
+paycli node start --network devnet --faucet --connect-seeds
+paycli node status                                        # pid + pubkey + balance + peers
+paycli node logs -f                                       # tail lnd.log
+paycli node stop                                          # graceful (lncli stop) + SIGTERM fallback
+```
+
+Storage layout under `~/.paycli/`: `lnd/<version>/bin/` for binaries,
+`lnd-data/` for the data dir (logs, pid, tls.cert, macaroon). Every
+step the wizard does is also reachable as an individual command
+(`register`, `login`, `node …`, `config set`, …) — see below if you'd
+rather drive it manually or script the setup.
 
 ## Global flags
 
