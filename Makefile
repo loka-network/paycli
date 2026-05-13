@@ -1,4 +1,4 @@
-BINARY := paycli
+BINARY := lokapay
 BUILD_DIR := bin
 PKG := github.com/loka-network/paycli
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
@@ -12,10 +12,10 @@ all: build
 
 build:
 	@mkdir -p $(BUILD_DIR)
-	go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY) ./cmd/paycli
+	go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY) ./cmd/lokapay
 
 install:
-	go install $(GOFLAGS) -ldflags "$(LDFLAGS)" ./cmd/paycli
+	go install $(GOFLAGS) -ldflags "$(LDFLAGS)" ./cmd/lokapay
 
 test: test-unit
 

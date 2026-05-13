@@ -162,7 +162,7 @@ func NewL402Doer(wallet Wallet) *L402Doer {
 // The body is buffered before the first send so retries can re-deliver it.
 func (d *L402Doer) Do(ctx context.Context, req *http.Request) (*http.Response, error) {
 	if d.Wallet == nil {
-		return nil, errors.New("paycli: L402Doer requires a Wallet client")
+		return nil, errors.New("lokapay: L402Doer requires a Wallet client")
 	}
 	if d.HTTPClient == nil {
 		d.HTTPClient = http.DefaultClient
@@ -183,7 +183,7 @@ func (d *L402Doer) Do(ctx context.Context, req *http.Request) (*http.Response, e
 		bodyBytes, err = io.ReadAll(req.Body)
 		_ = req.Body.Close()
 		if err != nil {
-			return nil, fmt.Errorf("paycli: read request body: %w", err)
+			return nil, fmt.Errorf("lokapay: read request body: %w", err)
 		}
 	}
 	resetBody := func() {

@@ -1,6 +1,6 @@
 # Integration test playbook
 
-paycli ships an integration test suite that exercises the SDK against a real
+lokapay ships an integration test suite that exercises the SDK against a real
 local Loka Payment stack. It's gated behind the `integration` build tag so
 unit tests stay hermetic.
 
@@ -104,7 +104,7 @@ not an SDK issue.
   empty wallet and accepts an `Insufficient balance` error from
   agents-pay-service as a successful "challenge plumbing works" signal.
   Set `PAYCLI_IT_FUNDED_ADMIN_KEY` to an admin key whose wallet has been
-  topped up (e.g. via a `bob payinvoice` of a `paycli fund` invoice) for
+  topped up (e.g. via a `bob payinvoice` of a `lokapay fund` invoice) for
   a true end-to-end pay-and-replay assertion.
 
 ## Verified end-to-end flows
@@ -113,15 +113,15 @@ These sequences have been run against the local stack and confirmed
 to settle real Lightning payments. Use them as smoke tests when you
 want to convince yourself the full chain is healthy.
 
-### Hosted route — paycli paying through agents-pay-service
+### Hosted route — lokapay paying through agents-pay-service
 
 ```bash
-# 1. fresh wallet via paycli
-paycli --base-url http://127.0.0.1:5002 register "h-test"
+# 1. fresh wallet via lokapay
+lokapay --base-url http://127.0.0.1:5002 register "h-test"
 
 # 2. mint a fund invoice and have Bob pay it via REST (proves Bob's
 #    SUI chain backend is healthy — see "When SUI chain RPC drifts" below)
-INV=$(paycli fund --amount 100000000 --memo topup | jq -r .bolt11)
+INV=$(lokapay fund --amount 100000000 --memo topup | jq -r .bolt11)
 curl -ks --cacert /tmp/lnd-sui-test/bob/tls.cert \
     -X POST https://127.0.0.1:8082/v1/channels/transactions \
     -H "Grpc-Metadata-macaroon: $(xxd -ps -u -c 1000 /tmp/lnd-sui-test/bob/data/chain/sui/devnet/admin.macaroon)" \
@@ -130,25 +130,25 @@ curl -ks --cacert /tmp/lnd-sui-test/bob/tls.cert \
 # 3. drive an L402 request. Use a service whose payment backend is NOT the
 #    same lnd as agents-pay-service's funding source — otherwise lnd will
 #    refuse with "self-payments not allowed".
-paycli request --insecure-target \
+lokapay request --insecure-target \
     -H "Host: merchant-bob.local" -i \
     https://127.0.0.1:8080/freebieservice
 # Expected: HTTP 200 from the backend (or 404 if no path), wallet balance
 # decreased by 10M sat (service2's price = 10000000 MIST).
 ```
 
-### Node route — paycli driving the user's own lnd-sui
+### Node route — lokapay driving the user's own lnd-sui
 
 ```bash
-# 1. point paycli at Bob's REST gateway
-paycli register --route node \
+# 1. point lokapay at Bob's REST gateway
+lokapay register --route node \
     --lnd-endpoint  https://127.0.0.1:8082 \
     --lnd-tls-cert  /tmp/lnd-sui-test/bob/tls.cert \
     --lnd-macaroon  /tmp/lnd-sui-test/bob/data/chain/sui/devnet/admin.macaroon
 
 # 2. drive L402 — same command as hosted, dispatches by saved route.
 #    Bob has 5 SUI in the channel, well above service prices.
-paycli request --insecure-target -H "Host: service1.com" -i \
+lokapay request --insecure-target -H "Host: service1.com" -i \
     https://127.0.0.1:8080/freebieservice
 # Expected: HTTP 200 / 404 from backend, Bob's channel local_balance
 # decreased by ~10M sat.
@@ -171,8 +171,8 @@ the HTML body as JSON and surfaces this nested error.
 
 Channel-only RPCs (`/v1/balance/channels`, `/v1/invoices`,
 `/v1/payments`) keep working because they don't query chain state —
-that's why `paycli fund` and `paycli history` may keep working even
-when `paycli pay` and `paycli whoami` are broken.
+that's why `lokapay fund` and `lokapay history` may keep working even
+when `lokapay pay` and `lokapay whoami` are broken.
 
 Fix: full restart of the integration stack.
 
@@ -204,11 +204,11 @@ real `block_height` instead of the pprof body.
 
 ```bash
 # 1. create a fresh wallet
-paycli --base-url http://127.0.0.1:5002 register "it-funded"
+lokapay --base-url http://127.0.0.1:5002 register "it-funded"
 ADMIN=$(jq -r .admin_key ~/.paycli/config.json)
 
 # 2. issue a topup invoice
-INV=$(paycli fund --amount 1000000 --memo it-topup | jq -r .bolt11)
+INV=$(lokapay fund --amount 1000000 --memo it-topup | jq -r .bolt11)
 
 # 3. pay it from Bob's lnd-sui (the channel-funded side)
 LNCLI_BIN=/path/to/lnd/lncli-debug
@@ -228,5 +228,5 @@ PAYCLI_IT_FUNDED_ADMIN_KEY=$ADMIN scripts/integration-test.sh
 | `dial tcp 127.0.0.1:5002: connection refused` | agents-pay-service not started on 5002 |
 | `Missing user ID or access token` on `add-wallet` | `LNBITS_AUTH_METHODS` doesn't include `user_id_only` |
 | 402 loop / `ErrChallengeExhausted` | wallet has no funds OR Prism's macaroon is rejected by itself; check `--max-retries` and channel balance |
-| `Insufficient balance.` from `paycli pay` / `request` | wallet not funded; see "Funding a wallet" above |
-| `cannot unmarshal string into Go struct field Payment.time of type int64` | SDK out of sync with server schema; `Payment.Time` is `interface{}` since v0.1 — rebuild `paycli` |
+| `Insufficient balance.` from `lokapay pay` / `request` | wallet not funded; see "Funding a wallet" above |
+| `cannot unmarshal string into Go struct field Payment.time of type int64` | SDK out of sync with server schema; `Payment.Time` is `interface{}` since v0.1 — rebuild `lokapay` |

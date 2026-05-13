@@ -72,7 +72,7 @@ func eventLogPath() (string, bool) {
 //
 // Concurrency: the underlying os.File.Write with O_APPEND is atomic for
 // writes ≤ PIPE_BUF (≥ 512 on POSIX), and our serialized lines are well
-// under that limit, so concurrent paycli invocations interleave safely.
+// under that limit, so concurrent lokapay invocations interleave safely.
 func LogEvent(e Event) {
 	path, enabled := eventLogPath()
 	if !enabled || path == "" {
@@ -82,24 +82,24 @@ func LogEvent(e Event) {
 		e.Timestamp = time.Now().UTC().Format(time.RFC3339Nano)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		fmt.Fprintf(os.Stderr, "paycli: event log mkdir failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "lokapay: event log mkdir failed: %v\n", err)
 		return
 	}
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "paycli: event log open failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "lokapay: event log open failed: %v\n", err)
 		return
 	}
 	defer f.Close()
 
 	line, err := json.Marshal(e)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "paycli: event log marshal failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "lokapay: event log marshal failed: %v\n", err)
 		return
 	}
 	line = append(line, '\n')
 	if _, err := f.Write(line); err != nil {
-		fmt.Fprintf(os.Stderr, "paycli: event log write failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "lokapay: event log write failed: %v\n", err)
 	}
 }
 

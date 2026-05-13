@@ -10,7 +10,7 @@ import (
 	"github.com/loka-network/paycli/pkg/sdk"
 )
 
-// Route enumerates the two custody models paycli supports today. They are
+// Route enumerates the two custody models lokapay supports today. They are
 // mutually exclusive per config — a user picks one at `register` / `login`
 // time and every subsequent command dispatches against it.
 type Route string
@@ -30,7 +30,7 @@ const (
 //
 // `wallets` is the map of locally-known sub-wallets keyed by a friendly
 // alias the user picks (e.g. "default", "agent-research", "agent-trading").
-// `active_wallet` is the alias paycli uses by default for fund / pay /
+// `active_wallet` is the alias lokapay uses by default for fund / pay /
 // whoami / request — overridable per-call with the global --wallet flag.
 //
 // On-wire JSON:
@@ -52,7 +52,7 @@ const (
 //	  "node": { ... }
 //	}
 //
-// Configs written by older paycli builds are loaded transparently — the
+// Configs written by older lokapay builds are loaded transparently — the
 // shim in loadConfig folds legacy flat / pre-multiwallet fields into the
 // new shape. Subsequent saveConfig rewrites in the canonical layout.
 type Config struct {
@@ -70,12 +70,12 @@ type HostedConfig struct {
 	UserID           string `json:"user_id,omitempty"`
 	AdminBearerToken string `json:"admin_bearer_token,omitempty"`
 
-	// ActiveWallet is the alias paycli targets by default. When unset
+	// ActiveWallet is the alias lokapay targets by default. When unset
 	// AND there's exactly one wallet in the map, that single wallet is
 	// the implicit active.
 	ActiveWallet string `json:"active_wallet,omitempty"`
 
-	// Wallets stores every sub-wallet paycli has provisioned locally.
+	// Wallets stores every sub-wallet lokapay has provisioned locally.
 	// Each entry holds the per-wallet X-Api-Keys an agent talks to
 	// agents-pay-service with.
 	Wallets map[string]WalletEntry `json:"wallets,omitempty"`
@@ -92,7 +92,7 @@ type WalletEntry struct {
 //
 // Endpoint / TLSCertPath / MacaroonPath are the original "point at an
 // already-running lnd" fields. The remaining fields are populated by
-// `paycli node install` + `paycli node start` when paycli is managing
+// `lokapay node install` + `lokapay node start` when lokapay is managing
 // a local lnd itself; they're optional and harmless for the
 // external-lnd workflow.
 type NodeConfig struct {
@@ -100,16 +100,16 @@ type NodeConfig struct {
 	TLSCertPath  string `json:"tls_cert_path,omitempty"`
 	MacaroonPath string `json:"macaroon_path,omitempty"`
 
-	// Managed-lnd fields — populated by `paycli node install/start`.
+	// Managed-lnd fields — populated by `lokapay node install/start`.
 	LndBinaryPath   string `json:"lnd_binary_path,omitempty"`
 	LncliBinaryPath string `json:"lncli_binary_path,omitempty"`
 	LndDir          string `json:"lnd_dir,omitempty"`            // --lnddir target (and where logs / PID live)
 	LndVersion      string `json:"lnd_version,omitempty"`        // e.g. "v0.21.0", for upgrade tracking
 	Network         string `json:"network,omitempty"`            // "devnet" | "testnet" | "mainnet"
-	PackageID       string `json:"package_id,omitempty"`         // resolved at start time, cached so paycli node status doesn't need network
+	PackageID       string `json:"package_id,omitempty"`         // resolved at start time, cached so lokapay node status doesn't need network
 }
 
-// ResolveWallet returns the wallet entry paycli should use for a command.
+// ResolveWallet returns the wallet entry lokapay should use for a command.
 //
 //	override != ""        → look up by alias; error if missing
 //	override == "" + ActiveWallet set → the named active wallet
@@ -119,14 +119,14 @@ func (h *HostedConfig) ResolveWallet(override string) (string, WalletEntry, erro
 	if override != "" {
 		w, ok := h.Wallets[override]
 		if !ok {
-			return "", WalletEntry{}, fmt.Errorf("no wallet named %q in config (run `paycli wallets list`)", override)
+			return "", WalletEntry{}, fmt.Errorf("no wallet named %q in config (run `lokapay wallets list`)", override)
 		}
 		return override, w, nil
 	}
 	if h.ActiveWallet != "" {
 		w, ok := h.Wallets[h.ActiveWallet]
 		if !ok {
-			return "", WalletEntry{}, fmt.Errorf("active_wallet=%q but no entry under wallets — run `paycli wallets use <name>`", h.ActiveWallet)
+			return "", WalletEntry{}, fmt.Errorf("active_wallet=%q but no entry under wallets — run `lokapay wallets use <name>`", h.ActiveWallet)
 		}
 		return h.ActiveWallet, w, nil
 	}
@@ -136,9 +136,9 @@ func (h *HostedConfig) ResolveWallet(override string) (string, WalletEntry, erro
 		}
 	}
 	if len(h.Wallets) == 0 {
-		return "", WalletEntry{}, errors.New("no wallets configured (run `paycli register` or `paycli wallets add <name>`)")
+		return "", WalletEntry{}, errors.New("no wallets configured (run `lokapay register` or `lokapay wallets add <name>`)")
 	}
-	return "", WalletEntry{}, fmt.Errorf("multiple wallets configured but no active selected — run `paycli wallets use <name>` or pass --wallet")
+	return "", WalletEntry{}, fmt.Errorf("multiple wallets configured but no active selected — run `lokapay wallets use <name>` or pass --wallet")
 }
 
 // PutWallet adds or replaces an entry in the wallets map. If the map is
@@ -154,7 +154,7 @@ func (h *HostedConfig) PutWallet(name string, w WalletEntry) {
 }
 
 // EffectiveRoute resolves the route, defaulting to hosted when unset (so
-// configs written by older paycli builds keep working).
+// configs written by older lokapay builds keep working).
 func (c *Config) EffectiveRoute() Route {
 	if c.Route == "" {
 		return RouteHosted
@@ -339,7 +339,7 @@ func nodeClientFromConfig(cfg *Config, endpointOverride string, insecureOverride
 		endpoint = endpointOverride
 	}
 	if endpoint == "" {
-		return nil, errors.New("node endpoint not configured (run `paycli login --route node --lnd-endpoint ...`)")
+		return nil, errors.New("node endpoint not configured (run `lokapay login --route node --lnd-endpoint ...`)")
 	}
 	if cfg.Node.MacaroonPath == "" {
 		return nil, errors.New("node macaroon path not configured")
@@ -367,7 +367,7 @@ func walletForCurrentRoute(cfg *Config, baseURLOverride, endpointOverride string
 			return nil, err
 		}
 		if cl.KeyType != sdk.KeyAdmin {
-			return nil, errors.New("admin key required to auto-pay L402 challenges (run `paycli wallets use <name>` to switch to an admin-key-bearing wallet)")
+			return nil, errors.New("admin key required to auto-pay L402 challenges (run `lokapay wallets use <name>` to switch to an admin-key-bearing wallet)")
 		}
 		return cl, nil
 	case RouteNode:

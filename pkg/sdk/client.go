@@ -4,7 +4,7 @@
 //
 // The SDK is intentionally thin: one HTTP client, plain types, and a small
 // L402 state machine. It has no opinions about config storage or CLI UX —
-// those live in cmd/paycli on top of this package.
+// those live in cmd/lokapay on top of this package.
 package sdk
 
 import (
@@ -108,7 +108,7 @@ func LoginWithPassword(ctx context.Context, baseURL, username, password string, 
 		return "", err
 	}
 	if out.AccessToken == "" {
-		return "", fmt.Errorf("paycli: auth: empty access_token")
+		return "", fmt.Errorf("lokapay: auth: empty access_token")
 	}
 	return out.AccessToken, nil
 }
@@ -146,7 +146,7 @@ func RegisterAccount(ctx context.Context, baseURL, username, password, email str
 		return "", err
 	}
 	if out.AccessToken == "" {
-		return "", fmt.Errorf("paycli: register: empty access_token")
+		return "", fmt.Errorf("lokapay: register: empty access_token")
 	}
 	return out.AccessToken, nil
 }
@@ -169,7 +169,7 @@ func ListWalletsByBearer(ctx context.Context, baseURL, bearerToken string, opts 
 // is check_account_id_exists, which honors Authorization: Bearer in
 // addition to the ?usr= query param).
 //
-// This is the route paycli uses to provision per-agent wallets after
+// This is the route lokapay uses to provision per-agent wallets after
 // `register --username`: the JWT is what the user already has cached,
 // and Bearer works regardless of whether the server has the
 // user_id_only auth method enabled.
@@ -221,7 +221,7 @@ func (c *Client) doWithBearer(ctx context.Context, method, path string, body, ou
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, rdr)
 	if err != nil {
-		return fmt.Errorf("paycli: build request: %w", err)
+		return fmt.Errorf("lokapay: build request: %w", err)
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -232,12 +232,12 @@ func (c *Client) doWithBearer(ctx context.Context, method, path string, body, ou
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("paycli: http: %w", err)
+		return fmt.Errorf("lokapay: http: %w", err)
 	}
 	defer resp.Body.Close()
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("paycli: read body: %w", err)
+		return fmt.Errorf("lokapay: read body: %w", err)
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
 		return ErrUnauthorized
@@ -263,7 +263,7 @@ func jsonReader(body interface{}) (io.Reader, error) {
 	}
 	buf, err := json.Marshal(body)
 	if err != nil {
-		return nil, fmt.Errorf("paycli: marshal body: %w", err)
+		return nil, fmt.Errorf("lokapay: marshal body: %w", err)
 	}
 	return bytes.NewReader(buf), nil
 }
@@ -276,7 +276,7 @@ func New(baseURL string, opts ...Option) *Client {
 	c := &Client{
 		BaseURL:    strings.TrimRight(baseURL, "/"),
 		HTTPClient: &http.Client{Timeout: 30 * time.Second},
-		UserAgent:  "paycli-sdk/0.1",
+		UserAgent:  "lokapay-sdk/0.1",
 	}
 	for _, o := range opts {
 		o(c)
@@ -310,7 +310,7 @@ func (c *Client) CreateAccount(ctx context.Context, name string) (*HostedWallet,
 // POST /api/v1/wallet?usr={userID}
 func (c *Client) CreateWallet(ctx context.Context, userID, name string) (*HostedWallet, error) {
 	if userID == "" {
-		return nil, fmt.Errorf("paycli: CreateWallet requires userID")
+		return nil, fmt.Errorf("lokapay: CreateWallet requires userID")
 	}
 	body := CreateWalletRequest{Name: name}
 	path := "/api/v1/wallet?usr=" + url.QueryEscape(userID)
@@ -450,13 +450,13 @@ func (c *Client) do(ctx context.Context, method, path string, body, out interfac
 	if body != nil {
 		buf, err := json.Marshal(body)
 		if err != nil {
-			return fmt.Errorf("paycli: marshal body: %w", err)
+			return fmt.Errorf("lokapay: marshal body: %w", err)
 		}
 		rdr = bytes.NewReader(buf)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, rdr)
 	if err != nil {
-		return fmt.Errorf("paycli: build request: %w", err)
+		return fmt.Errorf("lokapay: build request: %w", err)
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -472,13 +472,13 @@ func (c *Client) do(ctx context.Context, method, path string, body, out interfac
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("paycli: http: %w", err)
+		return fmt.Errorf("lokapay: http: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("paycli: read body: %w", err)
+		return fmt.Errorf("lokapay: read body: %w", err)
 	}
 
 	if resp.StatusCode == http.StatusUnauthorized {
@@ -498,7 +498,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out interfac
 		return nil
 	}
 	if err := json.Unmarshal(respBody, out); err != nil {
-		return fmt.Errorf("paycli: decode response: %w", err)
+		return fmt.Errorf("lokapay: decode response: %w", err)
 	}
 	return nil
 }

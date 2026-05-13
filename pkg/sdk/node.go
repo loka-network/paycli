@@ -19,7 +19,7 @@ import (
 )
 
 // NodeClient talks directly to an lnd / lnd-sui node's grpc-gateway REST
-// endpoint. This is "route A" — the user runs their own LN node and paycli
+// endpoint. This is "route A" — the user runs their own LN node and lokapay
 // is a thin client over its REST surface.
 //
 // Auth follows lnd's standard convention:
@@ -28,7 +28,7 @@ import (
 //   - Macaroon (admin or invoice-scoped) hex-encoded in the
 //     Grpc-Metadata-macaroon header
 //
-// Only the small subset of REST endpoints paycli needs is wrapped here.
+// Only the small subset of REST endpoints lokapay needs is wrapped here.
 // For everything else, fall through to the raw HTTP client.
 type NodeClient struct {
 	// Endpoint is the base URL of the node's REST listener,
@@ -64,7 +64,7 @@ func WithNodeTLSCertFile(path string) NodeOption {
 	return func(o *nodeOpts) error {
 		b, err := os.ReadFile(path)
 		if err != nil {
-			return fmt.Errorf("paycli: read tls cert %s: %w", path, err)
+			return fmt.Errorf("lokapay: read tls cert %s: %w", path, err)
 		}
 		o.tlsCertPEM = b
 		o.tlsCertPath = path
@@ -91,7 +91,7 @@ func WithNodeMacaroonFile(path string) NodeOption {
 	return func(o *nodeOpts) error {
 		b, err := os.ReadFile(path)
 		if err != nil {
-			return fmt.Errorf("paycli: read macaroon %s: %w", path, err)
+			return fmt.Errorf("lokapay: read macaroon %s: %w", path, err)
 		}
 		o.macaroon = hex.EncodeToString(b)
 		return nil
@@ -122,17 +122,17 @@ func WithNodeUserAgent(ua string) NodeOption {
 // URL pointing at the node's REST listener.
 func NewNodeClient(endpoint string, opts ...NodeOption) (*NodeClient, error) {
 	if endpoint == "" {
-		return nil, fmt.Errorf("paycli: NewNodeClient: endpoint required")
+		return nil, fmt.Errorf("lokapay: NewNodeClient: endpoint required")
 	}
 
-	cfg := &nodeOpts{timeout: 30 * time.Second, userAgent: "paycli-sdk-node/0.1"}
+	cfg := &nodeOpts{timeout: 30 * time.Second, userAgent: "lokapay-sdk-node/0.1"}
 	for _, o := range opts {
 		if err := o(cfg); err != nil {
 			return nil, err
 		}
 	}
 	if cfg.macaroon == "" {
-		return nil, fmt.Errorf("paycli: NewNodeClient: macaroon is required (use WithNodeMacaroonFile or WithNodeMacaroonHex)")
+		return nil, fmt.Errorf("lokapay: NewNodeClient: macaroon is required (use WithNodeMacaroonFile or WithNodeMacaroonHex)")
 	}
 
 	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
@@ -142,7 +142,7 @@ func NewNodeClient(endpoint string, opts ...NodeOption) (*NodeClient, error) {
 	case len(cfg.tlsCertPEM) > 0:
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM(cfg.tlsCertPEM) {
-			return nil, fmt.Errorf("paycli: tls cert from %s did not contain a valid PEM block", cfg.tlsCertPath)
+			return nil, fmt.Errorf("lokapay: tls cert from %s did not contain a valid PEM block", cfg.tlsCertPath)
 		}
 		tlsCfg.RootCAs = pool
 	}
@@ -158,7 +158,7 @@ func NewNodeClient(endpoint string, opts ...NodeOption) (*NodeClient, error) {
 	}, nil
 }
 
-// --- Response types (only fields paycli consumes) -------------------------
+// --- Response types (only fields lokapay consumes) -------------------------
 
 // NodeInfo is a slim subset of lnrpc.GetInfoResponse.
 type NodeInfo struct {
@@ -308,7 +308,7 @@ func (n *NodeClient) SendPaymentSync(ctx context.Context, bolt11 string) (*NodeS
 // PayInvoice satisfies the Wallet interface so a NodeClient can drive an
 // L402Doer just like the hosted Client.
 //
-// The returned Payment maps lnd's send response onto paycli's common shape:
+// The returned Payment maps lnd's send response onto lokapay's common shape:
 //   - Status="success" + Preimage=<hex> on a paid invoice
 //   - Status="failed" + payment_error preserved in Extra on failure
 func (n *NodeClient) PayInvoice(ctx context.Context, bolt11 string) (*Payment, error) {
@@ -361,13 +361,13 @@ func (n *NodeClient) do(ctx context.Context, method, path string, body, out inte
 	if body != nil {
 		buf, err := json.Marshal(body)
 		if err != nil {
-			return fmt.Errorf("paycli: marshal body: %w", err)
+			return fmt.Errorf("lokapay: marshal body: %w", err)
 		}
 		rdr = bytes.NewReader(buf)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, n.Endpoint+path, rdr)
 	if err != nil {
-		return fmt.Errorf("paycli: build request: %w", err)
+		return fmt.Errorf("lokapay: build request: %w", err)
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -378,13 +378,13 @@ func (n *NodeClient) do(ctx context.Context, method, path string, body, out inte
 
 	resp, err := n.HTTPClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("paycli: http: %w", err)
+		return fmt.Errorf("lokapay: http: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("paycli: read body: %w", err)
+		return fmt.Errorf("lokapay: read body: %w", err)
 	}
 
 	if resp.StatusCode == http.StatusUnauthorized {
@@ -414,7 +414,7 @@ func (n *NodeClient) do(ctx context.Context, method, path string, body, out inte
 	if err := json.Unmarshal(respBody, &maybeErr); err == nil &&
 		maybeErr.Code != 0 && maybeErr.Message != "" {
 		// Distinguish from a real success that happens to have a
-		// "message" field (none of the lnrpc responses paycli wraps do).
+		// "message" field (none of the lnrpc responses lokapay wraps do).
 		// The Code field on lnd error objects is non-zero (gRPC status code).
 		return &APIError{Status: resp.StatusCode, Detail: maybeErr.Message, Body: string(respBody)}
 	}
@@ -423,7 +423,7 @@ func (n *NodeClient) do(ctx context.Context, method, path string, body, out inte
 		return nil
 	}
 	if err := json.Unmarshal(respBody, out); err != nil {
-		return fmt.Errorf("paycli: decode response: %w", err)
+		return fmt.Errorf("lokapay: decode response: %w", err)
 	}
 	return nil
 }

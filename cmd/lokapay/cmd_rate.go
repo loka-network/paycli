@@ -16,7 +16,7 @@ import (
 //	{ "rate": <native units per 1 fiat unit>, "price": <fiat per native unit> }
 //
 // On a SUI deployment that's MIST/USD + USD/SUI; on BTC it's sat/USD +
-// USD/BTC. paycli detects the chain by sniffing the most recent
+// USD/BTC. lokapay detects the chain by sniffing the most recent
 // fund/pay event's `extra` field — if `wallet_sui_rate` was present the
 // chain is SUI, if `wallet_btc_rate` then BTC. When the active wallet
 // has never seen a payment we fall back to a generic native-unit label.
@@ -70,7 +70,7 @@ func cmdRate() *cli.Command {
 }
 
 // chainUnits is the (display-name, sub-unit-name, sub-units-per-whole)
-// triple paycli uses to label numbers. SUI uses MIST as the sub-unit
+// triple lokapay uses to label numbers. SUI uses MIST as the sub-unit
 // (1 SUI = 10^9 MIST); BTC uses sat (1 BTC = 10^8 sat).
 type chainUnits struct {
 	unit         string  // human-facing whole-unit name

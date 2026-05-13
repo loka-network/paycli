@@ -14,13 +14,13 @@ import (
 )
 
 // DefaultPrismURL is the hosted Loka Prism gateway. Override per
-// NewPrismClient call (or via paycli --prism-url) for self-hosted setups.
+// NewPrismClient call (or via lokapay --prism-url) for self-hosted setups.
 const DefaultPrismURL = "https://prism.loka.cash"
 
 // PrismClient calls Prism's admin gRPC-gateway REST API. Auth is the same
 // shape as lnd: hex-encoded macaroon in the Grpc-Metadata-Macaroon header.
 //
-// The relevant endpoint for paycli is GET /api/admin/services — the
+// The relevant endpoint for lokapay is GET /api/admin/services — the
 // service catalog, which Prism exposes without authentication so end-user
 // clients can render a service picker. Other admin operations
 // (CreateService, RevokeToken, stats) remain macaroon-gated.
@@ -49,7 +49,7 @@ func WithPrismMacaroonFile(path string) PrismOption {
 	return func(o *prismOpts) error {
 		b, err := os.ReadFile(path)
 		if err != nil {
-			return fmt.Errorf("paycli: read prism macaroon %s: %w", path, err)
+			return fmt.Errorf("lokapay: read prism macaroon %s: %w", path, err)
 		}
 		o.macHex = hex.EncodeToString(b)
 		return nil
@@ -131,7 +131,7 @@ type prismListServicesResp struct {
 func (p *PrismClient) ListServices(ctx context.Context) ([]PrismService, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.Endpoint+"/api/admin/services", nil)
 	if err != nil {
-		return nil, fmt.Errorf("paycli: build request: %w", err)
+		return nil, fmt.Errorf("lokapay: build request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
 	if p.MacaroonHex != "" {
@@ -140,13 +140,13 @@ func (p *PrismClient) ListServices(ctx context.Context) ([]PrismService, error) 
 
 	resp, err := p.HTTPClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("paycli: http: %w", err)
+		return nil, fmt.Errorf("lokapay: http: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("paycli: read body: %w", err)
+		return nil, fmt.Errorf("lokapay: read body: %w", err)
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
 		return nil, ErrUnauthorized
@@ -162,7 +162,7 @@ func (p *PrismClient) ListServices(ctx context.Context) ([]PrismService, error) 
 	}
 	var out prismListServicesResp
 	if err := json.Unmarshal(body, &out); err != nil {
-		return nil, fmt.Errorf("paycli: decode: %w", err)
+		return nil, fmt.Errorf("lokapay: decode: %w", err)
 	}
 	return out.Services, nil
 }

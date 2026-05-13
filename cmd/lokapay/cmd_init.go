@@ -15,7 +15,7 @@ import (
 )
 
 // cmdInit is the interactive setup wizard. Drives a first-time user
-// from "I just installed paycli" to "I can sign payments" without
+// from "I just installed lokapay" to "I can sign payments" without
 // having to learn the register/login/wallets/config commands. The
 // primary path is hosted route + register, which is what 95%+ of new
 // users want; node and login paths are reachable from the same wizard.
@@ -23,13 +23,13 @@ import (
 // The flow doesn't introduce new server semantics — it just composes
 // existing SDK / config helpers (sdk.RegisterAccount,
 // sdk.ListWalletsByBearer, saveConfig, …). Anything the wizard sets
-// up is reproducible by hand via `paycli register` + `paycli config
+// up is reproducible by hand via `lokapay register` + `lokapay config
 // set`, so the wizard is a convenience layer, not a new abstraction.
 func cmdInit() *cli.Command {
 	return &cli.Command{
 		Name:  "init",
 		Usage: "Interactive setup wizard — pick endpoint, register or log in, save ~/.paycli/config.json",
-		Description: "Walks first-time users through paycli setup:\n" +
+		Description: "Walks first-time users through lokapay setup:\n" +
 			"  1. choose hosted (custodial) or node (self-hosted) route\n" +
 			"  2. pick an endpoint — defaults to https://agents-pay.loka.cash for hosted\n" +
 			"  3. register a new named account or persist existing keys\n" +
@@ -45,7 +45,7 @@ func cmdInit() *cli.Command {
 }
 
 func runInitWizard(ctx context.Context, autoYes bool) error {
-	fmt.Fprintln(os.Stderr, "── paycli setup ────────────────────────────────────────")
+	fmt.Fprintln(os.Stderr, "── lokapay setup ────────────────────────────────────────")
 	fmt.Fprintln(os.Stderr)
 
 	cfg, err := loadConfig()
@@ -113,7 +113,7 @@ func wizardHosted(ctx context.Context, cfg *Config) error {
 	return fail("init: unexpected hosted-mode pick %q", mode)
 }
 
-// wizardHostedRegister mirrors `paycli register --username` but with
+// wizardHostedRegister mirrors `lokapay register --username` but with
 // prompts. Backed by sdk.RegisterAccount + sdk.ListWalletsByBearer so
 // it produces the same on-disk shape.
 func wizardHostedRegister(ctx context.Context, cfg *Config) error {
@@ -171,7 +171,7 @@ func wizardHostedRegister(ctx context.Context, cfg *Config) error {
 }
 
 // wizardHostedLoginKeys persists pre-existing wallet keys. No remote
-// call until the user runs `paycli whoami` — matches `paycli login`'s
+// call until the user runs `lokapay whoami` — matches `lokapay login`'s
 // "credentials in, config out" stance.
 func wizardHostedLoginKeys(ctx context.Context, cfg *Config) error {
 	adminKey, invoiceKey, walletAlias, walletID, userID, err := promptLoginKeys()
@@ -196,11 +196,11 @@ func wizardHostedLoginKeys(ctx context.Context, cfg *Config) error {
 
 // wizardNode handles the self-hosted lnd route. Two sub-flows:
 //
-//	guided — paycli downloads loka-lnd, starts it against Sui
+//	guided — lokapay downloads loka-lnd, starts it against Sui
 //	         devnet/testnet, optionally hits the faucet + connects to
 //	         Loka seed nodes, then writes everything into the config
-//	         (delegates to `paycli node install` + `paycli node start`)
-//	manual — point paycli at an already-running lnd by typing the
+//	         (delegates to `lokapay node install` + `lokapay node start`)
+//	manual — point lokapay at an already-running lnd by typing the
 //	         endpoint + tls cert + macaroon paths
 func wizardNode(ctx context.Context, cfg *Config) error {
 	mode, err := promptNodeMode()
@@ -222,7 +222,7 @@ func wizardNodeGuided(ctx context.Context, cfg *Config) error {
 		return err
 	}
 
-	destRoot, err := paycliLndRoot()
+	destRoot, err := lokapayLndRoot()
 	if err != nil {
 		return err
 	}
@@ -243,7 +243,7 @@ func wizardNodeGuided(ctx context.Context, cfg *Config) error {
 	}
 	fmt.Fprintf(os.Stderr, "  sui %s package_id: %s\n", network, pkgID)
 
-	lndDir, err := paycliLndDataDir()
+	lndDir, err := lokapayLndDataDir()
 	if err != nil {
 		return err
 	}
@@ -284,8 +284,8 @@ func wizardNodeGuided(ctx context.Context, cfg *Config) error {
 	fmt.Fprintf(os.Stderr, "  network:   %s\n  endpoint:  %s\n  lnddir:    %s\n", network, cfg.Node.Endpoint, lndDir)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Next:")
-	fmt.Fprintln(os.Stderr, "  paycli node status        # confirm pubkey + balance")
-	fmt.Fprintln(os.Stderr, "  paycli whoami             # via the saved node config")
+	fmt.Fprintln(os.Stderr, "  lokapay node status        # confirm pubkey + balance")
+	fmt.Fprintln(os.Stderr, "  lokapay whoami             # via the saved node config")
 	return nil
 }
 
@@ -304,7 +304,7 @@ func wizardNodeManual(ctx context.Context, cfg *Config) error {
 		return fail("save config: %v", err)
 	}
 
-	// Probe — same semantics as `paycli register --route node`.
+	// Probe — same semantics as `lokapay register --route node`.
 	fmt.Fprintln(os.Stderr, "→ probing node with GetInfo …")
 	nc, err := nodeClientFromConfig(cfg, "", false)
 	if err != nil {
@@ -317,7 +317,7 @@ func wizardNodeManual(ctx context.Context, cfg *Config) error {
 	} else {
 		fmt.Fprintf(os.Stderr, "✓ node responded — alias=%s pubkey=%s\n", info.Alias, info.IdentityPubkey)
 	}
-	fmt.Fprintln(os.Stderr, "Done. Try: paycli whoami")
+	fmt.Fprintln(os.Stderr, "Done. Try: lokapay whoami")
 	return nil
 }
 
@@ -475,7 +475,7 @@ func promptNodeMode() (string, error) {
 		Description: func(value string, _ int) string {
 			switch value {
 			case "guided":
-				return "paycli downloads loka-lnd, starts it against Sui, configures itself"
+				return "lokapay downloads loka-lnd, starts it against Sui, configures itself"
 			case "manual":
 				return "I already have an lnd running — just enter endpoint + paths"
 			}
@@ -618,7 +618,7 @@ func printHostedSummary(cfg *Config, walletName string) {
 	fmt.Fprintf(os.Stderr, "  active wallet: %s (server name: %s)\n", cfg.Hosted.ActiveWallet, walletName)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Next:")
-	fmt.Fprintln(os.Stderr, "  paycli whoami            # confirm the wallet")
-	fmt.Fprintln(os.Stderr, "  paycli services          # browse Prism services")
-	fmt.Fprintln(os.Stderr, "  paycli fund --amount 5 --unit USD --via stripe   # top up via Stripe")
+	fmt.Fprintln(os.Stderr, "  lokapay whoami            # confirm the wallet")
+	fmt.Fprintln(os.Stderr, "  lokapay services          # browse Prism services")
+	fmt.Fprintln(os.Stderr, "  lokapay fund --amount 5 --unit USD --via stripe   # top up via Stripe")
 }

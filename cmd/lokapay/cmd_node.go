@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,31 +15,32 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/loka-network/paycli/pkg/sdk"
 	"github.com/urfave/cli/v2"
 )
 
-// cmdNode is the `paycli node …` subcommand group: a turn-key wrapper
+// cmdNode is the `lokapay node …` subcommand group: a turn-key wrapper
 // for downloading + running a local loka-lnd against the Sui chain
 // backend without the operator having to clone the source repo.
 //
 // All state lives under ~/.paycli/{lnd,lnd-data}/. The flow follows
 // loka-agentic-payment SKILL.md: install binaries → start with the
 // right --suinode flags → optionally hit the devnet faucet → optionally
-// connect to the Loka seed nodes → register paths in paycli config so
-// every subsequent `paycli pay / fund / request` dispatches against the
+// connect to the Loka seed nodes → register paths in lokapay config so
+// every subsequent `lokapay pay / fund / request` dispatches against the
 // running node.
 func cmdNode() *cli.Command {
 	return &cli.Command{
 		Name:  "node",
-		Usage: "Manage a paycli-managed local loka-lnd (download, start, stop, status, logs)",
+		Usage: "Manage a lokapay-managed local loka-lnd (download, start, stop, status, logs)",
 		Subcommands: []*cli.Command{
 			cmdNodeInstall(),
 			cmdNodeStart(),
 			cmdNodeStop(),
+			cmdNodeRestart(),
+			cmdNodeUpgrade(),
 			cmdNodeStatus(),
 			cmdNodeLogs(),
 		},
@@ -47,7 +50,7 @@ func cmdNode() *cli.Command {
 func cmdNodeInstall() *cli.Command {
 	return &cli.Command{
 		Name:  "install",
-		Usage: "Download the loka-lnd release for this host and remember its path in paycli config",
+		Usage: "Download the loka-lnd release for this host and remember its path in lokapay config",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "version", Value: sdk.DefaultLndVersion, Usage: "release tag, e.g. v0.21.0 (or 'latest' to resolve via GitHub)"},
 			&cli.BoolFlag{Name: "force", Usage: "redownload + overwrite even if binaries already exist at this version"},
@@ -57,7 +60,7 @@ func cmdNodeInstall() *cli.Command {
 			if err != nil {
 				return err
 			}
-			destRoot, err := paycliLndRoot()
+			destRoot, err := lokapayLndRoot()
 			if err != nil {
 				return err
 			}
@@ -80,9 +83,9 @@ func cmdNodeInstall() *cli.Command {
 func cmdNodeStart() *cli.Command {
 	return &cli.Command{
 		Name:  "start",
-		Usage: "Boot the installed loka-lnd against Sui devnet/testnet, write its paths into paycli config",
+		Usage: "Boot the installed loka-lnd against a Sui chain, write its paths into lokapay config",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "network", Value: string(sdk.NetworkDevnet), Usage: "sui chain to connect to: devnet | testnet"},
+			&cli.StringFlag{Name: "network", Value: string(sdk.NetworkDevnet), Usage: "sui chain to connect to: devnet | testnet | mainnet"},
 			&cli.StringFlag{Name: "lnddir", Usage: "lnd data directory (default ~/.paycli/lnd-data)"},
 			&cli.StringFlag{Name: "package-id", Usage: "override the auto-resolved Sui Lightning Move package ID"},
 			&cli.IntFlag{Name: "rpc-port", Value: 10009, Usage: "lnd gRPC port"},
@@ -98,12 +101,15 @@ func cmdNodeStart() *cli.Command {
 				return err
 			}
 			if cfg.Node.LndBinaryPath == "" {
-				return fail("node start: no lnd binary installed — run `paycli node install` first")
+				return fail("node start: no lnd binary installed — run `lokapay node install` first")
 			}
 			network := sdk.SuiNetwork(strings.ToLower(c.String("network")))
 			netCfg, ok := sdk.SuiNetworkConfigs[network]
 			if !ok {
-				return fail("node start: unknown --network %q (want devnet | testnet)", network)
+				return fail("node start: unknown --network %q (want devnet | testnet | mainnet)", network)
+			}
+			if c.Bool("faucet") && netCfg.FaucetURL == "" {
+				fmt.Fprintf(os.Stderr, "warning: --faucet ignored on %s (no faucet endpoint)\n", network)
 			}
 
 			lndDir := c.String("lnddir")
@@ -111,7 +117,7 @@ func cmdNodeStart() *cli.Command {
 				if cfg.Node.LndDir != "" {
 					lndDir = cfg.Node.LndDir
 				} else {
-					d, err := paycliLndDataDir()
+					d, err := lokapayLndDataDir()
 					if err != nil {
 						return err
 					}
@@ -134,7 +140,7 @@ func cmdNodeStart() *cli.Command {
 			}
 
 			if alreadyRunning(lndDir) {
-				return fail("node start: an lnd process is already recorded in %s/lnd.pid — run `paycli node stop` first", lndDir)
+				return fail("node start: an lnd process is already recorded in %s/lnd.pid — run `lokapay node stop` first", lndDir)
 			}
 
 			ports := managedLndPorts{P2P: c.Int("p2p-port"), RPC: c.Int("rpc-port"), REST: c.Int("rest-port")}
@@ -166,9 +172,9 @@ func cmdNodeStart() *cli.Command {
 
 			fmt.Fprintln(os.Stderr)
 			fmt.Fprintln(os.Stderr, "Next:")
-			fmt.Fprintln(os.Stderr, "  paycli config set route node")
-			fmt.Fprintln(os.Stderr, "  paycli node status         # confirm pubkey + balance")
-			fmt.Fprintln(os.Stderr, "  paycli node logs -f        # tail the lnd log")
+			fmt.Fprintln(os.Stderr, "  lokapay config set route node")
+			fmt.Fprintln(os.Stderr, "  lokapay node status         # confirm pubkey + balance")
+			fmt.Fprintln(os.Stderr, "  lokapay node logs -f        # tail the lnd log")
 			return nil
 		},
 	}
@@ -177,7 +183,7 @@ func cmdNodeStart() *cli.Command {
 func cmdNodeStop() *cli.Command {
 	return &cli.Command{
 		Name:  "stop",
-		Usage: "Stop the paycli-managed lnd (graceful via lncli, SIGTERM fallback)",
+		Usage: "Stop the lokapay-managed lnd (graceful via lncli, SIGTERM fallback)",
 		Action: func(c *cli.Context) error {
 			cfg, err := loadConfig()
 			if err != nil {
@@ -186,25 +192,152 @@ func cmdNodeStop() *cli.Command {
 			if cfg.Node.LndDir == "" {
 				return fail("node stop: no managed lnd recorded in config")
 			}
-			// Try graceful shutdown first.
-			if cfg.Node.LncliBinaryPath != "" && cfg.Node.MacaroonPath != "" {
-				out, err := runLncli(c.Context, cfg, "stop")
-				if err == nil {
-					fmt.Fprintf(os.Stderr, "✓ lnd stopped (graceful): %s\n", strings.TrimSpace(out))
-					removePidFile(cfg.Node.LndDir)
-					return nil
-				}
-				fmt.Fprintf(os.Stderr, "warning: graceful stop failed (%v); falling back to SIGTERM\n", err)
-			}
-			pid, err := readPidFile(cfg.Node.LndDir)
-			if err != nil {
-				return fail("node stop: %v", err)
-			}
-			if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
-				return fail("kill %d: %v", pid, err)
-			}
-			fmt.Fprintf(os.Stderr, "✓ SIGTERM sent to pid %d\n", pid)
+			return stopManagedLnd(c.Context, cfg)
+		},
+	}
+}
+
+// stopManagedLnd asks lnd to shut down, falling back to SIGTERM if
+// the graceful path errors. Shared by `lokapay node stop`,
+// `lokapay node restart`, and `lokapay node upgrade`.
+func stopManagedLnd(ctx context.Context, cfg *Config) error {
+	if cfg.Node.LncliBinaryPath != "" && cfg.Node.MacaroonPath != "" {
+		out, err := runLncli(ctx, cfg, "stop")
+		if err == nil {
+			fmt.Fprintf(os.Stderr, "✓ lnd stopped (graceful): %s\n", strings.TrimSpace(out))
 			removePidFile(cfg.Node.LndDir)
+			return nil
+		}
+		fmt.Fprintf(os.Stderr, "warning: graceful stop failed (%v); falling back to SIGTERM\n", err)
+	}
+	pid, err := readPidFile(cfg.Node.LndDir)
+	if err != nil {
+		return err
+	}
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return fmt.Errorf("find pid %d: %w", pid, err)
+	}
+	if err := sendStopSignal(p); err != nil {
+		return fmt.Errorf("stop pid %d: %w", pid, err)
+	}
+	fmt.Fprintf(os.Stderr, "✓ stop signal sent to pid %d\n", pid)
+	removePidFile(cfg.Node.LndDir)
+	return nil
+}
+
+// derivedPorts returns the port triple to pass into spawnManagedLnd
+// on a restart/upgrade. Parses REST from cfg.Node.Endpoint and falls
+// back to the defaults if anything is missing — same effective values
+// as a fresh `lokapay node start` would pick.
+func derivedPorts(cfg *Config) managedLndPorts {
+	ports := defaultManagedLndPorts
+	if cfg.Node.Endpoint == "" {
+		return ports
+	}
+	// Endpoint shape: https://127.0.0.1:<rest>
+	if i := strings.LastIndex(cfg.Node.Endpoint, ":"); i > 0 {
+		if p, err := strconv.Atoi(strings.TrimSuffix(cfg.Node.Endpoint[i+1:], "/")); err == nil && p > 0 {
+			ports.REST = p
+		}
+	}
+	return ports
+}
+
+func cmdNodeRestart() *cli.Command {
+	return &cli.Command{
+		Name:  "restart",
+		Usage: "Stop + start the managed lnd using the network / lnddir already in config",
+		Flags: []cli.Flag{
+			&cli.DurationFlag{Name: "wait-timeout", Value: 30 * time.Second, Usage: "how long to wait for lnd's RPC port to come up after restart"},
+		},
+		Action: func(c *cli.Context) error {
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			if cfg.Node.LndDir == "" {
+				return fail("node restart: no managed lnd recorded in config — run `lokapay node install` + `lokapay node start` first")
+			}
+			network := sdk.SuiNetwork(cfg.Node.Network)
+			netCfg, ok := sdk.SuiNetworkConfigs[network]
+			if !ok {
+				return fail("node restart: unknown saved network %q", cfg.Node.Network)
+			}
+			if alreadyRunning(cfg.Node.LndDir) {
+				if err := stopManagedLnd(c.Context, cfg); err != nil {
+					return fail("node restart: stop failed: %v", err)
+				}
+				// Give the OS a beat to release the RPC port.
+				time.Sleep(1500 * time.Millisecond)
+			}
+			ports := derivedPorts(cfg)
+			if err := spawnManagedLnd(c.Context, cfg, cfg.Node.LndDir, network, netCfg, cfg.Node.PackageID, ports, c.Duration("wait-timeout")); err != nil {
+				return fail("node restart: %v", err)
+			}
+			return nil
+		},
+	}
+}
+
+func cmdNodeUpgrade() *cli.Command {
+	return &cli.Command{
+		Name:  "upgrade",
+		Usage: "Install a newer loka-lnd release, stop the running node, restart on the new binary",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "version", Value: "latest", Usage: "target release tag, e.g. v0.22.0 (or 'latest')"},
+			&cli.BoolFlag{Name: "force", Usage: "redownload + overwrite the target version even if already installed"},
+			&cli.DurationFlag{Name: "wait-timeout", Value: 30 * time.Second, Usage: "how long to wait for the new lnd's RPC port to come up"},
+		},
+		Action: func(c *cli.Context) error {
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			if cfg.Node.LndDir == "" {
+				return fail("node upgrade: no managed lnd recorded — run `lokapay node install` + `lokapay node start` first")
+			}
+			destRoot, err := lokapayLndRoot()
+			if err != nil {
+				return err
+			}
+			res, err := sdk.DownloadAndExtractLnd(c.Context, destRoot, c.String("version"), c.Bool("force"), os.Stderr)
+			if err != nil {
+				return fail("node upgrade: %v", err)
+			}
+			if alreadyRunning(cfg.Node.LndDir) {
+				fmt.Fprintln(os.Stderr, "→ stopping running lnd before switching binaries …")
+				if err := stopManagedLnd(c.Context, cfg); err != nil {
+					return fail("node upgrade: stop failed: %v", err)
+				}
+				time.Sleep(1500 * time.Millisecond)
+			}
+			cfg.Node.LndBinaryPath = res.LndPath
+			cfg.Node.LncliBinaryPath = res.LncliPath
+			cfg.Node.LndVersion = res.Version
+			if err := saveConfig(cfg); err != nil {
+				return fail("save config: %v", err)
+			}
+			network := sdk.SuiNetwork(cfg.Node.Network)
+			netCfg, ok := sdk.SuiNetworkConfigs[network]
+			if !ok {
+				return fail("node upgrade: unknown saved network %q", cfg.Node.Network)
+			}
+			// Re-resolve the package id from the new version's deploy_state.
+			fmt.Fprintf(os.Stderr, "→ re-resolving package id for %s @ %s …\n", network, res.Version)
+			pkgID, err := sdk.FetchSuiPackageID(c.Context, network, res.Version)
+			if err != nil {
+				return fail("node upgrade: %v (override with --package-id on the next `node start` if needed)", err)
+			}
+			cfg.Node.PackageID = pkgID
+			if err := saveConfig(cfg); err != nil {
+				return fail("save config: %v", err)
+			}
+			ports := derivedPorts(cfg)
+			if err := spawnManagedLnd(c.Context, cfg, cfg.Node.LndDir, network, netCfg, pkgID, ports, c.Duration("wait-timeout")); err != nil {
+				return fail("node upgrade: spawn new binary: %v", err)
+			}
+			fmt.Fprintf(os.Stderr, "✓ upgraded to %s\n", res.Version)
 			return nil
 		},
 	}
@@ -220,7 +353,7 @@ func cmdNodeStatus() *cli.Command {
 				return err
 			}
 			if cfg.Node.LndDir == "" {
-				fmt.Fprintln(os.Stderr, "no managed lnd recorded — run `paycli node install` then `paycli node start`")
+				fmt.Fprintln(os.Stderr, "no managed lnd recorded — run `lokapay node install` then `lokapay node start`")
 				return nil
 			}
 			pid, _ := readPidFile(cfg.Node.LndDir)
@@ -299,13 +432,25 @@ type managedLndPorts struct {
 var defaultManagedLndPorts = managedLndPorts{P2P: 9735, RPC: 10009, REST: 8081}
 
 // spawnManagedLnd starts lnd in the background and waits for the RPC
-// port to come up. Used by both `paycli node start` and the init
+// port to come up. Used by both `lokapay node start` and the init
 // wizard's guided node path so they share the exact same command-line
 // flags / log-handling / PID-file conventions.
+//
+// First-boot wallet handling: a 32-byte random password is generated
+// and written to <lndDir>/wallet.password (perms 0600). lnd's
+// --wallet-unlock-password-file does the rest — first boot creates the
+// wallet with that password (paired with --noseedbackup to skip the
+// TTY seed-phrase prompt), subsequent boots auto-unlock. The password
+// file stays under the lnddir, alongside the macaroon, so the trust
+// model is "if you have lnddir, you have the wallet".
 //
 // The caller is responsible for writing config (endpoint, paths) — this
 // helper only manages the process. timeout is how long to wait for RPC.
 func spawnManagedLnd(ctx context.Context, cfg *Config, lndDir string, network sdk.SuiNetwork, netCfg sdk.SuiNetworkConfig, pkgID string, ports managedLndPorts, timeout time.Duration) error {
+	pwFile, err := ensureWalletPasswordFile(lndDir)
+	if err != nil {
+		return fmt.Errorf("wallet password file: %w", err)
+	}
 	args := []string{
 		"--suinode.active",
 		fmt.Sprintf("--suinode.%s", network),
@@ -316,7 +461,8 @@ func spawnManagedLnd(ctx context.Context, cfg *Config, lndDir string, network sd
 		fmt.Sprintf("--restlisten=127.0.0.1:%d", ports.REST),
 		"--protocol.wumbo-channels",
 		"--protocol.no-anchors",
-		"--noseedbackup", // skip TTY-only seed prompt; matches the itest workflow
+		"--noseedbackup",                       // skip the human-readable seed prompt
+		"--wallet-unlock-password-file=" + pwFile, // auto-create / auto-unlock the wallet
 		"--lnddir=" + lndDir,
 	}
 	logPath := filepath.Join(lndDir, "lnd.log")
@@ -328,8 +474,9 @@ func spawnManagedLnd(ctx context.Context, cfg *Config, lndDir string, network sd
 	}
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
-	// Detach so the lnd outlives this paycli invocation.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	// Detach so the lnd outlives this lokapay invocation. The platform-
+	// specific syscall flags live in process_{unix,windows}.go.
+	setDetached(cmd)
 
 	fmt.Fprintf(os.Stderr, "→ starting %s --suinode.%s …\n", cfg.Node.LndBinaryPath, network)
 	if err := cmd.Start(); err != nil {
@@ -346,10 +493,38 @@ func spawnManagedLnd(ctx context.Context, cfg *Config, lndDir string, network sd
 	return nil
 }
 
+// ensureWalletPasswordFile returns the path to a 32-byte hex password
+// file under lndDir, creating it on first call. Idempotent — second
+// and subsequent calls return the existing file untouched so lnd can
+// keep unlocking the existing wallet.
+//
+// Trust model: file is 0600, dir is 0700. Anyone with read on
+// <lndDir> already has the macaroon, so colocating the password
+// doesn't broaden the blast radius. For prod hardening you'd want a
+// keychain / KMS integration here — out of scope for the MVP.
+func ensureWalletPasswordFile(lndDir string) (string, error) {
+	if err := os.MkdirAll(lndDir, 0o700); err != nil {
+		return "", err
+	}
+	pwPath := filepath.Join(lndDir, "wallet.password")
+	if _, err := os.Stat(pwPath); err == nil {
+		return pwPath, nil
+	}
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(pwPath, []byte(hex.EncodeToString(buf)), 0o600); err != nil {
+		return "", err
+	}
+	fmt.Fprintf(os.Stderr, "→ generated wallet password at %s (0600)\n", pwPath)
+	return pwPath, nil
+}
+
 // ----------------------------------------------------------------
 // Helpers shared by the subcommands.
 
-func paycliLndRoot() (string, error) {
+func lokapayLndRoot() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("home dir: %w", err)
@@ -357,7 +532,7 @@ func paycliLndRoot() (string, error) {
 	return filepath.Join(home, ".paycli", "lnd"), nil
 }
 
-func paycliLndDataDir() (string, error) {
+func lokapayLndDataDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("home dir: %w", err)
@@ -402,17 +577,11 @@ func removePidFile(lndDir string) {
 	_ = os.Remove(filepath.Join(lndDir, "lnd.pid"))
 }
 
+// processAlive is provided by process_unix.go / process_windows.go via
+// signalProcessAlive — the cross-platform wrapper. Kept here as a
+// pid-only entry point so existing callers don't change.
 func processAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	p, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	// signal 0: no-op, but returns ESRCH if the process is gone.
-	err = p.Signal(syscall.Signal(0))
-	return err == nil
+	return signalProcessAlive(pid)
 }
 
 // runLncli shells out to lncli with the right --rpcserver / --lnddir /
@@ -420,7 +589,7 @@ func processAlive(pid int) bool {
 // stdout on success; stderr is bubbled up in the error.
 func runLncli(ctx context.Context, cfg *Config, args ...string) (string, error) {
 	if cfg.Node.LncliBinaryPath == "" {
-		return "", errors.New("no lncli binary recorded in config — run `paycli node install`")
+		return "", errors.New("no lncli binary recorded in config — run `lokapay node install`")
 	}
 	full := []string{
 		"--lnddir=" + cfg.Node.LndDir,

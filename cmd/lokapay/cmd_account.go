@@ -20,7 +20,7 @@ import (
 //
 //   hosted (named): when --username is set, switches to
 //           POST /api/v1/auth/register so the resulting account has a
-//           bcrypt password hash. Dashboard login + paycli auth-login
+//           bcrypt password hash. Dashboard login + lokapay auth-login
 //           both work afterwards. The auto-created default wallet's
 //           keys are fetched via GET /api/v1/wallets and persisted.
 //
@@ -30,7 +30,7 @@ func cmdRegister() *cli.Command {
 	return &cli.Command{
 		Name:        "register",
 		Usage:       "Register a wallet (anonymous on hosted by default, or named with --username)",
-		Description: "IMPORTANT: put --flags BEFORE the [wallet-name] positional argument.\nurfave/cli v2 stops flag parsing at the first positional, so\n  paycli register --username alice --password ... \"alice-treasury\"\nis correct;  paycli register \"alice-treasury\" --username alice  is NOT.",
+		Description: "IMPORTANT: put --flags BEFORE the [wallet-name] positional argument.\nurfave/cli v2 stops flag parsing at the first positional, so\n  lokapay register --username alice --password ... \"alice-treasury\"\nis correct;  lokapay register \"alice-treasury\" --username alice  is NOT.",
 		ArgsUsage:   "[wallet-name]",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "route", Value: string(RouteHosted), Usage: "hosted | node"},
@@ -268,14 +268,14 @@ func cmdWhoami() *cli.Command {
 	}
 }
 
-// registerNamedHosted runs the named-account variant of `paycli register`:
+// registerNamedHosted runs the named-account variant of `lokapay register`:
 // POST /api/v1/auth/register → JWT, then GET /api/v1/wallets to grab the
 // auto-created wallet's keys, then persist everything (keys + JWT) to
-// config so subsequent paycli commands work without re-authenticating.
+// config so subsequent lokapay commands work without re-authenticating.
 //
-// The JWT is the same kind of token paycli auth-login produces, so this
+// The JWT is the same kind of token lokapay auth-login produces, so this
 // flow doubles as a one-shot "register + login" — the user can call
-// `paycli admin-set` / `topup` immediately if their account has the
+// `lokapay admin-set` / `topup` immediately if their account has the
 // privileges.
 func registerNamedHosted(c *cli.Context, cfg *Config) error {
 	// Guard the local "default" alias before any remote call so we don't
@@ -368,7 +368,7 @@ func registerNamedHosted(c *cli.Context, cfg *Config) error {
 //
 // The error message points at the two recovery paths:
 //   - explicit overwrite via --force (operator opted in to the loss)
-//   - first remove the old entry via `paycli wallets remove <alias>`
+//   - first remove the old entry via `lokapay wallets remove <alias>`
 func guardDuplicateWallet(cfg *Config, alias string, force bool) error {
 	if force {
 		return nil
@@ -379,7 +379,7 @@ func guardDuplicateWallet(cfg *Config, alias string, force bool) error {
 	}
 	return fmt.Errorf(
 		"a wallet alias %q already exists in this config (wallet_id %s) — refusing to overwrite. "+
-			"Either remove it first (`paycli wallets remove %s`) or pass --force to drop the old keys",
+			"Either remove it first (`lokapay wallets remove %s`) or pass --force to drop the old keys",
 		alias, existing.WalletID, alias)
 }
 

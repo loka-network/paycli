@@ -9,16 +9,16 @@ import (
 	"github.com/urfave/cli/v2"
 )
 
-// cmdWallets is the wallets subcommand group. paycli's hosted-route
+// cmdWallets is the wallets subcommand group. lokapay's hosted-route
 // model is one user account → many sub-wallets, each with its own
 // admin/invoice X-Api-Keys an agent talks to agents-pay-service with.
 // This group manages the local map of those sub-wallets:
 //
-//	paycli wallets list                # show local map (active marked)
-//	paycli wallets add <name>          # create on server + persist locally
-//	paycli wallets use <name>          # switch active
-//	paycli wallets show [<name>]       # print one entry's keys
-//	paycli wallets remove <name>       # drop from local map (no server delete)
+//	lokapay wallets list                # show local map (active marked)
+//	lokapay wallets add <name>          # create on server + persist locally
+//	lokapay wallets use <name>          # switch active
+//	lokapay wallets show [<name>]       # print one entry's keys
+//	lokapay wallets remove <name>       # drop from local map (no server delete)
 func cmdWallets() *cli.Command {
 	return &cli.Command{
 		Name:  "wallets",
@@ -52,7 +52,7 @@ func cmdWalletsList() *cli.Command {
 				}{cfg.Hosted.ActiveWallet, cfg.Hosted.Wallets})
 			}
 			if len(cfg.Hosted.Wallets) == 0 {
-				fmt.Println("(no sub-wallets configured — run `paycli register` or `paycli wallets add <name>`)")
+				fmt.Println("(no sub-wallets configured — run `lokapay register` or `lokapay wallets add <name>`)")
 				return nil
 			}
 			names := make([]string, 0, len(cfg.Hosted.Wallets))
@@ -98,9 +98,9 @@ func cmdWalletsAdd() *cli.Command {
 		Name:      "add",
 		Usage:     "Create a sub-wallet on the server and persist its keys locally",
 		ArgsUsage: "<name>",
-		Description: "Calls POST /api/v1/wallet with the cached super-user JWT (run `paycli auth-login` or `paycli register --username`).\n" +
+		Description: "Calls POST /api/v1/wallet with the cached super-user JWT (run `lokapay auth-login` or `lokapay register --username`).\n" +
 			"The new wallet's admin / invoice X-Api-Keys are saved to ~/.paycli/config.json under the alias <name>.\n" +
-			"<name> is the LOCAL alias paycli uses (also sent to the server as the wallet's display name).",
+			"<name> is the LOCAL alias lokapay uses (also sent to the server as the wallet's display name).",
 		Flags: []cli.Flag{
 			&cli.BoolFlag{Name: "use", Usage: "also switch active_wallet to the newly-created entry"},
 			&cli.BoolFlag{Name: "force", Usage: "overwrite an existing local entry under the same alias (default refuses)"},
@@ -116,7 +116,7 @@ func cmdWalletsAdd() *cli.Command {
 			}
 			if cfg.Hosted.AdminBearerToken == "" {
 				return fail("wallets add: no super-user JWT cached — register a named account first " +
-					"(`paycli register --username NAME --password PW \"main\"`) or run `paycli auth-login`")
+					"(`lokapay register --username NAME --password PW \"main\"`) or run `lokapay auth-login`")
 			}
 			if err := guardDuplicateWallet(cfg, name, c.Bool("force")); err != nil {
 				return fail("wallets add: %v", err)
@@ -165,7 +165,7 @@ func cmdWalletsAdd() *cli.Command {
 func cmdWalletsUse() *cli.Command {
 	return &cli.Command{
 		Name:      "use",
-		Usage:     "Switch the active wallet (paycli's default target for fund/pay/whoami)",
+		Usage:     "Switch the active wallet (lokapay's default target for fund/pay/whoami)",
 		ArgsUsage: "<name>",
 		Action: func(c *cli.Context) error {
 			if c.NArg() < 1 {
@@ -177,7 +177,7 @@ func cmdWalletsUse() *cli.Command {
 				return err
 			}
 			if _, ok := cfg.Hosted.Wallets[name]; !ok {
-				return fail("wallets use: no wallet named %q in config (run `paycli wallets list`)", name)
+				return fail("wallets use: no wallet named %q in config (run `lokapay wallets list`)", name)
 			}
 			cfg.Hosted.ActiveWallet = name
 			if err := saveConfig(cfg); err != nil {
@@ -235,7 +235,7 @@ func cmdWalletsRemove() *cli.Command {
 		Name:      "remove",
 		Usage:     "Drop a wallet entry from the local config (no server-side delete)",
 		ArgsUsage: "<name>",
-		Description: "Removes the alias from ~/.paycli/config.json. The wallet keeps existing on the server and could be re-imported via `paycli wallets add` (which would re-create it with new keys, not the same ones — there's no server-side rename API in lnbits).",
+		Description: "Removes the alias from ~/.paycli/config.json. The wallet keeps existing on the server and could be re-imported via `lokapay wallets add` (which would re-create it with new keys, not the same ones — there's no server-side rename API in lnbits).",
 		Action: func(c *cli.Context) error {
 			if c.NArg() < 1 {
 				return fail("wallets remove: <name> is required")

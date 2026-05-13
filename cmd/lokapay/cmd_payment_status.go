@@ -21,7 +21,7 @@ import (
 //   preimage: hex (only present when paid=true)
 //
 // The endpoint accepts an optional X-Api-Key for the wallet, which
-// gives back a `details` block with the full Payment record. paycli
+// gives back a `details` block with the full Payment record. lokapay
 // sends the active wallet's admin key so the operator gets full
 // detail when present, and falls back gracefully when it isn't.
 func cmdPaymentStatus() *cli.Command {
@@ -31,7 +31,7 @@ func cmdPaymentStatus() *cli.Command {
 		ArgsUsage: "<payment_hash>",
 		Description: "Useful when a previous fund/pay/request returned status=pending and\n" +
 			"you want lnbits to re-query the underlying lnd. Same effect as\n" +
-			"hitting GET /api/v1/payments/{hash} directly. paycli adds the\n" +
+			"hitting GET /api/v1/payments/{hash} directly. lokapay adds the\n" +
 			"active wallet's X-Api-Key so the response includes wallet detail.",
 		Flags: []cli.Flag{
 			&cli.BoolFlag{Name: "json", Usage: "raw JSON response"},

@@ -4,7 +4,7 @@ When users top up via credit card or PayPal instead of Lightning, the
 flow is:
 
 ```
-paycli fund --amount 5 --unit USD --via stripe
+lokapay fund --amount 5 --unit USD --via stripe
        │
        ▼
 agents-pay-service POST /api/v1/payments {fiat_provider: "stripe", ...}
@@ -27,7 +27,7 @@ all**. Fiat providers credit balance directly into the sub-wallet
 ledger. Settlement is internal to lnbits.
 
 This doc covers operator setup. For the CLI flag itself see
-[`cli.md` → `paycli fund --via`](./cli.md#paycli-fund--amount-n---unit-satmistsuifiat---memo----expiry-seconds---via-stripepaypal---open).
+[`cli.md` → `lokapay fund --via`](./cli.md#paycli-fund--amount-n---unit-satmistsuifiat---memo----expiry-seconds---via-stripepaypal---open).
 
 ---
 
@@ -51,13 +51,13 @@ In the [Stripe Dashboard](https://dashboard.stripe.com):
    - After saving, click into the endpoint, **Reveal signing secret** →
      copy `whsec_...`.
 4. *(optional)* Note the **Publishable key** if you ever embed Stripe
-   Elements directly; the paycli flow doesn't need it.
+   Elements directly; the lokapay flow doesn't need it.
 
 ### 2. Configure agents-pay-service
 
 Easiest is to PATCH the admin settings via the REST API. You need an
 admin JWT — a super-user account's bearer token (see
-[`paycli auth-login` / register flow](./cli.md)).
+[`lokapay auth-login` / register flow](./cli.md)).
 
 ```bash
 ADMIN_JWT='eyJhbGciOi...'  # super-user JWT from /api/v1/auth/login
@@ -93,7 +93,7 @@ curl -s "$BASE/api/v1/fiat/test/stripe" -H "Authorization: Bearer $ADMIN_JWT"
 Then drive a real onramp from the user side:
 
 ```bash
-paycli fund --amount 5 --unit USD --via stripe --memo "agent budget" --open
+lokapay fund --amount 5 --unit USD --via stripe --memo "agent budget" --open
 # → JSON response (payment_hash, payment_request=<checkout_url>, ...)
 # → STRIPE checkout URL: https://checkout.stripe.com/c/pay/cs_test_...
 # Browser opens to the Stripe-hosted card form.
@@ -103,7 +103,7 @@ Pay with the test card `4242 4242 4242 4242`, any future expiry, any
 CVC. Stripe POSTs the webhook back; check the wallet balance:
 
 ```bash
-paycli whoami
+lokapay whoami
 # active wallet's balance includes the credited amount minus any
 # configured service fee.
 ```
@@ -163,7 +163,7 @@ For production, change `paypal_api_endpoint` to
 ### 3. Verify
 
 ```bash
-paycli fund --amount 9.99 --unit USD --via paypal --memo "agent budget" --open
+lokapay fund --amount 9.99 --unit USD --via paypal --memo "agent budget" --open
 # → PayPal approve_url: https://www.sandbox.paypal.com/checkoutnow?token=...
 ```
 
@@ -180,9 +180,9 @@ checkout.
 | `Fiat provider 'stripe' is not enabled.` | `stripe_enabled` is false in admin settings, or the admin JWT used to PATCH wasn't a super-user. |
 | `Cannot create payment request for 'stripe'.` | API secret rejected by Stripe (wrong key, test key in live mode, or live key in test mode). Check the Stripe dashboard logs. |
 | `Webhook signature verification failed.` | `stripe_webhook_signing_secret` doesn't match the endpoint. Re-copy from Stripe dashboard → Webhooks → endpoint → Reveal signing secret. |
-| paycli prints checkout URL but wallet doesn't credit after payment | Webhook isn't reaching the server. From the provider dashboard, look at the most recent delivery attempt (Stripe shows HTTP status + response body). For local dev, make sure your tunnel (`stripe listen` / `ngrok` / `cloudflared`) is running and points at the right port. |
-| `Fiat provider cannot be used with satoshis.` | You passed `--unit sat`. Use a fiat code: `--unit USD` / `EUR` / etc. paycli's client guard catches this before it hits the server. |
-| `--via requires hosted route` | Your active route is `node`. Run `paycli config set route hosted` to switch (and `paycli config set route node` to flip back when done). Fiat onramp only exists on the hosted route. |
+| lokapay prints checkout URL but wallet doesn't credit after payment | Webhook isn't reaching the server. From the provider dashboard, look at the most recent delivery attempt (Stripe shows HTTP status + response body). For local dev, make sure your tunnel (`stripe listen` / `ngrok` / `cloudflared`) is running and points at the right port. |
+| `Fiat provider cannot be used with satoshis.` | You passed `--unit sat`. Use a fiat code: `--unit USD` / `EUR` / etc. lokapay's client guard catches this before it hits the server. |
+| `--via requires hosted route` | Your active route is `node`. Run `lokapay config set route hosted` to switch (and `lokapay config set route node` to flip back when done). Fiat onramp only exists on the hosted route. |
 
 ## Operational notes
 
@@ -197,5 +197,5 @@ checkout.
   user-id allow-list. Empty list = anyone can use the provider; set it
   to lock fiat onramp down to specific accounts.
 - **Subscriptions**: `POST /api/v1/fiat/subscriptions` (not yet exposed
-  from paycli) drives recurring billing through the same provider
-  config. Implement on top of `paycli fund --via` when needed.
+  from lokapay) drives recurring billing through the same provider
+  config. Implement on top of `lokapay fund --via` when needed.

@@ -70,11 +70,11 @@ The SDK returns three kinds of errors:
 
 ```go
 var (
-    ErrUnauthorized       = errors.New("paycli: unauthorized — check api key")
-    ErrAdminKeyRequired   = errors.New("paycli: admin key required for this operation")
-    ErrPaymentFailed      = errors.New("paycli: payment failed")
-    ErrInvalidChallenge   = errors.New("paycli: invalid L402 challenge header")
-    ErrChallengeExhausted = errors.New("paycli: L402 retry budget exhausted")
+    ErrUnauthorized       = errors.New("lokapay: unauthorized — check api key")
+    ErrAdminKeyRequired   = errors.New("lokapay: admin key required for this operation")
+    ErrPaymentFailed      = errors.New("lokapay: payment failed")
+    ErrInvalidChallenge   = errors.New("lokapay: invalid L402 challenge header")
+    ErrChallengeExhausted = errors.New("lokapay: L402 retry budget exhausted")
 )
 
 type APIError struct {

@@ -43,11 +43,11 @@ tests/          Build-tag-gated integration tests against a live local stack
 ### Hosted route (custodial)
 
 ```bash
-make build                              # → bin/paycli
-bin/paycli --base-url http://127.0.0.1:5002 register "main"
-bin/paycli whoami
-bin/paycli fund --amount 1000 --memo "topup"
-bin/paycli request -H "Host: service1.com" \
+make build                              # → bin/lokapay
+bin/lokapay --base-url http://127.0.0.1:5002 register "main"
+bin/lokapay whoami
+bin/lokapay fund --amount 1000 --memo "topup"
+bin/lokapay request -H "Host: service1.com" \
     --insecure-target -i \
     https://127.0.0.1:8080/freebieservice
 ```
@@ -56,13 +56,13 @@ bin/paycli request -H "Host: service1.com" \
 
 ```bash
 make build
-bin/paycli register --route node \
+bin/lokapay register --route node \
     --lnd-endpoint  https://127.0.0.1:8081 \
     --lnd-tls-cert  /tmp/lnd-sui-test/alice/tls.cert \
     --lnd-macaroon  /tmp/lnd-sui-test/alice/data/chain/sui/devnet/admin.macaroon
-bin/paycli whoami
-bin/paycli fund --amount 1000 --memo "node-mode invoice"
-bin/paycli request -H "Host: service1.com" --insecure-target -i \
+bin/lokapay whoami
+bin/lokapay fund --amount 1000 --memo "node-mode invoice"
+bin/lokapay request -H "Host: service1.com" --insecure-target -i \
     https://127.0.0.1:8080/freebieservice    # same command, different backend
 ```
 
@@ -113,9 +113,9 @@ Why not embed this into `lnd/cmd/lncli`? Three reasons:
    Loka custodial REST commands into `cmd/commands/*.go` makes every upstream
    merge harder.
 2. **Different audience and scope** — `lncli` is a node operator's gRPC tool;
-   `paycli` is an end-user / AI-agent payments CLI with HTTP and L402 logic.
+   `lokapay` is an end-user / AI-agent payments CLI with HTTP and L402 logic.
    Route A users keep using `lncli` directly.
-3. **Decoupled dependencies** — `paycli` only needs `net/http` plus
+3. **Decoupled dependencies** — `lokapay` only needs `net/http` plus
    `urfave/cli`. No need to drag the whole lnd build tree into the agent
    image.
 

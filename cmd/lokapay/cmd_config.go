@@ -10,7 +10,7 @@ import (
 	"github.com/urfave/cli/v2"
 )
 
-// configKeyMap is the source of truth for `paycli config get/set`. Any new
+// configKeyMap is the source of truth for `lokapay config get/set`. Any new
 // Config field that should be user-mutable goes here.
 //
 // Keys use dotted paths matching the on-disk JSON layout
@@ -55,7 +55,7 @@ var configFields = map[string]configField{
 
 	// Hosted route -------------------------------------------------------
 	// Account-level fields (one per config) live as plain dotted keys.
-	// Per-wallet fields are managed via `paycli wallets` — `config get`
+	// Per-wallet fields are managed via `lokapay wallets` — `config get`
 	// can read them via the synthetic `hosted.active.*` shortcut below.
 	"hosted.base_url": {
 		get:  func(c *Config) string { return c.Hosted.BaseURL },
@@ -82,16 +82,16 @@ var configFields = map[string]configField{
 		get: func(c *Config) string { return c.Hosted.ActiveWallet },
 		set: func(c *Config, v string) error {
 			if _, ok := c.Hosted.Wallets[v]; !ok && v != "" {
-				return fmt.Errorf("no wallet named %q in hosted.wallets (run `paycli wallets list`)", v)
+				return fmt.Errorf("no wallet named %q in hosted.wallets (run `lokapay wallets list`)", v)
 			}
 			c.Hosted.ActiveWallet = v
 			return nil
 		},
-		help: "[hosted] alias of the wallet paycli targets by default",
+		help: "[hosted] alias of the wallet lokapay targets by default",
 	},
 	// Synthetic accessors for the active wallet's per-wallet fields, so
 	// users don't need to open the JSON to read keys. Set via
-	// `paycli wallets add` / `paycli login`, not `config set`.
+	// `lokapay wallets add` / `lokapay login`, not `config set`.
 	"hosted.active.admin_key": {
 		get: func(c *Config) string {
 			_, w, err := c.Hosted.ResolveWallet("")
@@ -100,7 +100,7 @@ var configFields = map[string]configField{
 			}
 			return w.AdminKey
 		},
-		set:    func(c *Config, v string) error { return errors.New("read-only — use `paycli login --admin-key …` or `wallets add`") },
+		set:    func(c *Config, v string) error { return errors.New("read-only — use `lokapay login --admin-key …` or `wallets add`") },
 		secret: true,
 		help:   "[hosted] active wallet's admin key (read-only shortcut)",
 	},
@@ -112,7 +112,7 @@ var configFields = map[string]configField{
 			}
 			return w.InvoiceKey
 		},
-		set:    func(c *Config, v string) error { return errors.New("read-only — use `paycli login --invoice-key …` or `wallets add`") },
+		set:    func(c *Config, v string) error { return errors.New("read-only — use `lokapay login --invoice-key …` or `wallets add`") },
 		secret: true,
 		help:   "[hosted] active wallet's invoice key (read-only shortcut)",
 	},
@@ -124,7 +124,7 @@ var configFields = map[string]configField{
 			}
 			return w.WalletID
 		},
-		set:  func(c *Config, v string) error { return errors.New("read-only — set via `paycli wallets add` or `paycli login`") },
+		set:  func(c *Config, v string) error { return errors.New("read-only — set via `lokapay wallets add` or `lokapay login`") },
 		help: "[hosted] active wallet's id (read-only shortcut)",
 	},
 
@@ -210,7 +210,7 @@ func cmdConfig() *cli.Command {
 					key := c.Args().First()
 					f, ok := configFields[key]
 					if !ok {
-						return fail("unknown key %q (try `paycli config keys`)", key)
+						return fail("unknown key %q (try `lokapay config keys`)", key)
 					}
 					cfg, err := loadConfig()
 					if err != nil {
@@ -231,7 +231,7 @@ func cmdConfig() *cli.Command {
 					key, val := c.Args().Get(0), c.Args().Get(1)
 					f, ok := configFields[key]
 					if !ok {
-						return fail("unknown key %q (try `paycli config keys`)", key)
+						return fail("unknown key %q (try `lokapay config keys`)", key)
 					}
 					cfg, err := loadConfig()
 					if err != nil {

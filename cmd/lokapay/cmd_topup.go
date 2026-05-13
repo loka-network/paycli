@@ -18,9 +18,9 @@ import (
 //
 // Requires a super-user JWT. Login flow:
 //
-//   1. paycli auth login --username admin
+//   1. lokapay auth login --username admin
 //      (prompts for password, persists Bearer token to config)
-//   2. paycli topup --wallet-id <id> --amount 50000
+//   2. lokapay topup --wallet-id <id> --amount 50000
 //
 // This is intentionally separate from the hosted register/login flow — it
 // targets a different role (operator vs end-user) and a different
@@ -40,7 +40,7 @@ func cmdTopup() *cli.Command {
 				return err
 			}
 			if cfg.Hosted.AdminBearerToken == "" {
-				return fail("topup: no super-user token cached — run `paycli auth login --username <name>` first")
+				return fail("topup: no super-user token cached — run `lokapay auth login --username <name>` first")
 			}
 			// topup amount can be negative (= debit), so sign-preserve via
 			// resolveAmount on the absolute value then re-apply the sign.
@@ -128,9 +128,9 @@ func cmdTopup() *cli.Command {
 //
 // Most useful for operator tweaks like enabling self-payment:
 //
-//   paycli admin-set lnd_grpc_allow_self_payment true
+//   lokapay admin-set lnd_grpc_allow_self_payment true
 //
-// Requires a super-user JWT cached via `paycli auth-login`.
+// Requires a super-user JWT cached via `lokapay auth-login`.
 func cmdAdminSet() *cli.Command {
 	return &cli.Command{
 		Name:      "admin-set",
@@ -145,7 +145,7 @@ func cmdAdminSet() *cli.Command {
 				return err
 			}
 			if cfg.Hosted.AdminBearerToken == "" {
-				return fail("admin-set: no super-user token cached — run `paycli auth-login --username <name>` first")
+				return fail("admin-set: no super-user token cached — run `lokapay auth-login --username <name>` first")
 			}
 			baseURL := cfg.Hosted.BaseURL
 			if v := c.String("base-url"); v != "" {
@@ -160,7 +160,7 @@ func cmdAdminSet() *cli.Command {
 			}
 			key, raw := c.Args().Get(0), c.Args().Get(1)
 			// Try JSON first (true/false/numbers/quoted-strings/arrays).
-			// Fall back to a plain string so `paycli admin-set foo bar`
+			// Fall back to a plain string so `lokapay admin-set foo bar`
 			// works without quoting.
 			var val interface{}
 			if err := json.Unmarshal([]byte(raw), &val); err != nil {
@@ -177,7 +177,7 @@ func cmdAdminSet() *cli.Command {
 }
 
 // cmdAuthLogin authenticates as a super-user / admin and stores the JWT in
-// the config so subsequent `paycli topup` calls can use it. Separate from
+// the config so subsequent `lokapay topup` calls can use it. Separate from
 // cmdLogin (which only writes API keys / node creds, no remote call).
 func cmdAuthLogin() *cli.Command {
 	return &cli.Command{

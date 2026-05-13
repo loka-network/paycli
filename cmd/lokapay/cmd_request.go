@@ -13,7 +13,7 @@ import (
 	"github.com/urfave/cli/v2"
 )
 
-// cmdRequest implements `paycli request <url>` — a curl-style HTTP wrapper that
+// cmdRequest implements `lokapay request <url>` — a curl-style HTTP wrapper that
 // transparently pays L402 challenges using whichever wallet backend the user
 // has configured (hosted custodial, or their own lnd-sui node).
 //

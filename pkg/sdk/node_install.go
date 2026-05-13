@@ -17,14 +17,14 @@ import (
 	"time"
 )
 
-// LokaLndReleaseRepo is the GitHub repo paycli pulls lnd binaries from.
+// LokaLndReleaseRepo is the GitHub repo lokapay pulls lnd binaries from.
 // Kept as a constant so callers (and tests) can swap to a fork without
 // touching this file's logic.
 const LokaLndReleaseRepo = "loka-network/loka-p2p-lnd"
 
-// DefaultLndVersion is the version paycli installs when no --version is
+// DefaultLndVersion is the version lokapay installs when no --version is
 // passed. Bumped per validated upstream release; older versions stay
-// installable explicitly. Picked over "latest" so a paycli release pins
+// installable explicitly. Picked over "latest" so a lokapay release pins
 // against a known-good lnd build instead of silently riding the head of
 // upstream.
 const DefaultLndVersion = "v0.21.0"
@@ -37,15 +37,17 @@ var LokaSeedNodes = []string{
 	"0268e7d59cfe59230ac6d0af4750bc5042bd6209e9cae1da32f98f8ee9ef9596a9@lnd-seed-us.loka.cash:9735",
 }
 
-// SuiNetwork is "devnet" / "testnet" / "mainnet". paycli currently
-// only auto-pins package IDs for the first two — mainnet support is a
-// matter of resolving its deploy_state JSON in the same way once the
-// repo publishes one.
+// SuiNetwork picks which Sui chain lnd talks to. All three are wired
+// here; the Move package id is resolved at runtime from
+// sui-contracts/lightning/deploy_state_<network>.json in the
+// loka-p2p-lnd repo, so mainnet works as soon as upstream publishes
+// deploy_state_mainnet.json.
 type SuiNetwork string
 
 const (
 	NetworkDevnet  SuiNetwork = "devnet"
 	NetworkTestnet SuiNetwork = "testnet"
+	NetworkMainnet SuiNetwork = "mainnet"
 )
 
 // SuiNetworkConfig is the per-network bundle needed to bring up lnd
@@ -69,10 +71,15 @@ var SuiNetworkConfigs = map[SuiNetwork]SuiNetworkConfig{
 		RPCHost:   "https://fullnode.testnet.sui.io:443",
 		FaucetURL: "https://faucet.testnet.sui.io/v2/gas",
 	},
+	NetworkMainnet: {
+		Network:   NetworkMainnet,
+		RPCHost:   "https://fullnode.mainnet.sui.io:443",
+		FaucetURL: "", // no faucet on mainnet; users must fund the address themselves
+	},
 }
 
 // LndInstallResult is what DownloadAndExtractLnd hands back to callers
-// so they can persist the binary paths in paycli config.
+// so they can persist the binary paths in lokapay config.
 type LndInstallResult struct {
 	Version   string
 	BinDir    string // e.g. ~/.paycli/lnd/v0.21.0/bin
@@ -278,7 +285,7 @@ func httpGetStream(ctx context.Context, url string) (io.ReadCloser, int64, error
 	if err != nil {
 		return nil, 0, err
 	}
-	req.Header.Set("User-Agent", "paycli")
+	req.Header.Set("User-Agent", "lokapay")
 	client := &http.Client{
 		Timeout: 10 * time.Minute,
 		Transport: &http.Transport{

@@ -1,7 +1,7 @@
 # Manual end-to-end test playbook
 
 A single document you can run **command by command, top to bottom**, to
-bring up the full local Loka stack and verify both paycli routes pay
+bring up the full local Loka stack and verify both lokapay routes pay
 real Lightning invoices through Prism.
 
 Last verified: 2026-05-07 against the local devnet.
@@ -13,7 +13,7 @@ Last verified: 2026-05-07 against the local devnet.
 - `loka-prism-l402` on `https://127.0.0.1:8080`
 - `agents-pay-service` (LNbits fork) on `http://127.0.0.1:5002`,
   super-user provisioned with a known password
-- `paycli` binary at `bin/paycli`
+- `lokapay` binary at `bin/lokapay`
 - A demo user account with three sub-wallets (one default, two
   per-agent) — exercises the multi-wallet model
 - Confirmed L402 payments through Prism on both routes
@@ -21,7 +21,7 @@ Last verified: 2026-05-07 against the local devnet.
 
 ## Prerequisites
 
-- Go 1.23+ (for paycli + lnd build) and Python 3.12+ (for lnbits)
+- Go 1.23+ (for lokapay + lnd build) and Python 3.12+ (for lnbits)
 - `sui` CLI installed and on PATH
 - A clean shell — every block below assumes you're at the repo root
   (`/Users/blake/work/nagara/code/chain/loka-payment`)
@@ -42,11 +42,11 @@ mkdir -p /tmp/paycli-itest
 
 ---
 
-## 1 · Build paycli
+## 1 · Build lokapay
 
 ```bash
-( cd $LOKA/paycli && make build )
-PAYCLI=$LOKA/paycli/bin/paycli
+( cd $LOKA/lokapay && make build )
+PAYCLI=$LOKA/paycli/bin/lokapay
 $PAYCLI --version
 ```
 
@@ -142,7 +142,7 @@ curl -s -X PUT $LNBITS_URL/api/v1/auth/first_install \
 # Expect: {"token_type":"bearer","has_token":true}
 ```
 
-Login via paycli (caches the JWT for `topup` and `admin-set`):
+Login via lokapay (caches the JWT for `topup` and `admin-set`):
 
 ```bash
 $PAYCLI --base-url $LNBITS_URL auth-login \
@@ -172,7 +172,7 @@ grep -E "Funding source|connected" /tmp/paycli-itest/lnbits.log | tail -3
 
 ---
 
-## 5 · Verify Prism catalog (paycli services)
+## 5 · Verify Prism catalog (lokapay services)
 
 ```bash
 $PAYCLI services \
@@ -186,12 +186,12 @@ $PAYCLI services \
 
 ## 6 · Hosted route — register modes
 
-paycli has two `register` modes on the hosted route. Pick the one that
+lokapay has two `register` modes on the hosted route. Pick the one that
 matches your role.
 
 ### 6a · Anonymous register (the default — no creds needed)
 
-`paycli register "<wallet-name>"` calls `POST /api/v1/account`, which is
+`lokapay register "<wallet-name>"` calls `POST /api/v1/account`, which is
 LNbits' anonymous fast path: no username, no password, no email. The DB
 row gets only a generated `id`, so this account **cannot** log into the
 LNbits dashboard. Designed for AI-agent fleet provisioning where
@@ -206,23 +206,23 @@ PAYCLI_CONFIG=/tmp/paycli-cfg-h.json \
 
 ### 6b · Named register (--username, dashboard-capable, multi-wallet)
 
-When `--username` is set, paycli switches to `POST /api/v1/auth/register`.
+When `--username` is set, lokapay switches to `POST /api/v1/auth/register`.
 The server stores a real username + bcrypt password hash, so the user
 can:
 
 - log into the LNbits dashboard (`/wallet` page)
-- be re-authenticated by `paycli auth-login`
+- be re-authenticated by `lokapay auth-login`
 - act as super-user / operator if their account id is in
   `super_user` / `lnbits_admin_users`
 
-paycli also fetches the auto-created wallet's keys via
+lokapay also fetches the auto-created wallet's keys via
 `GET /api/v1/wallets` (Bearer JWT) and caches both keys + JWT in the
 config — one command, fully ready for `topup` / `admin-set` / multi-wallet
 provisioning.
 
 > ⚠️ **Flag ordering**: urfave/cli v2 stops parsing flags at the first
 > positional argument. Put `--username` / `--password` / `--email`
-> **before** the wallet-name positional. paycli detects the wrong order
+> **before** the wallet-name positional. lokapay detects the wrong order
 > and prints a helpful error, but it's worth knowing.
 
 > ⚠️ **Username regex**: lnbits' `is_valid_username` only accepts
@@ -288,7 +288,7 @@ when you specifically want to exercise real LN settlement.
 The hosted topup API is super-user only. The `alice` account we
 created in 6b is NOT a super user — only the bootstrap admin from
 step 4 is. We need admin's JWT cached in the SAME config file we'll
-use to topup, because `paycli topup` reads `hosted.admin_bearer_token`
+use to topup, because `lokapay topup` reads `hosted.admin_bearer_token`
 from whichever config the command points at.
 
 A clean way is to swap the JWT in alice's config for one logged in as
@@ -335,12 +335,12 @@ PAYCLI_CONFIG=/tmp/paycli-cfg-h.json $PAYCLI whoami
 # Expect: balance dropped by ~10M sat (service2's price = 10000000 MIST)
 ```
 
-> If `paycli request` exits with `paycli: payment failed: status=pending`
+> If `lokapay request` exits with `lokapay: payment failed: status=pending`
 > but the balance still dropped by ~10M sat, the payment actually
 > settled — agents-pay-service's wallet driver returned the response
 > before lnd-sui's status state machine flipped from IN_FLIGHT to
 > SUCCEEDED. Same story as the self-payment caveat below; the L402
-> token didn't get fabricated (paycli is correctly conservative
+> token didn't get fabricated (lokapay is correctly conservative
 > about preimages), but the wallet balance reflects the real on-chain
 > outcome. Re-running the request usually settles cleanly once the
 > chain RPC has caught up.
@@ -398,7 +398,7 @@ pkill -f 'lnbits --port 5002'                       # restart so the funding
     < /dev/null > /tmp/paycli-itest/lnbits.log 2>&1 ) &
 until nc -z 127.0.0.1 5002; do sleep 1; done
 
-# Now `request` against service1 (authenticator = Alice = paycli's
+# Now `request` against service1 (authenticator = Alice = lokapay's
 # funding source) settles via the alice ↔ bob ↔ alice cycle that step
 # [8/8] of the itest also exercises.
 PAYCLI_CONFIG=/tmp/paycli-cfg-h.json \
@@ -464,7 +464,7 @@ $PAYCLI --base-url $LNBITS_URL auth-login \
     --username admin --password $ADMIN_PASSWORD
 ```
 
-Then topup. Without `--wallet-id`, paycli targets the active sub-wallet
+Then topup. Without `--wallet-id`, lokapay targets the active sub-wallet
 of the current config:
 
 ```bash
@@ -515,7 +515,7 @@ $PAYCLI events --path                      # print the log path
 PAYCLI_EVENT_LOG=off $PAYCLI fund …        # disable for one call
 ```
 
-Cross-tab agents: `paycli events --json | jq -s 'group_by(.wallet_alias) |
+Cross-tab agents: `lokapay events --json | jq -s 'group_by(.wallet_alias) |
 map({alias: .[0].wallet_alias, total: map(.amount) | add})'`.
 
 ---
@@ -535,7 +535,7 @@ rm -f /tmp/paycli-cfg-h.json /tmp/paycli-cfg-n.json
 
 ## Caveats discovered during this verification
 
-### Why env vars don't override at boot (use `paycli admin-set` instead)
+### Why env vars don't override at boot (use `lokapay admin-set` instead)
 
 `LND_GRPC_ALLOW_SELF_PAYMENT=true`, `LNBITS_BACKEND_WALLET_CLASS=LndWallet`,
 and similar env vars *do* get loaded by Pydantic at startup — but lnbits'
@@ -552,13 +552,13 @@ Workarounds:
   `init_admin_settings()` snapshots `settings.dict()` *after* env load
   and persists every field. So env vars seed the DB once, then live
   there durably.
-- **Existing install path**: use `paycli admin-set <key> <value>`
+- **Existing install path**: use `lokapay admin-set <key> <value>`
   (which PATCHes `/admin/api/v1/settings`) to update the DB row.
 
 ### lnd-sui self-payment requires `--allow-circular-route` + two channels
 
 When the same lnd both issues an invoice and pays it (the exact case for
-`paycli (Alice) → service1 (Alice authenticator)`), `SendPaymentV2` is a
+`lokapay (Alice) → service1 (Alice authenticator)`), `SendPaymentV2` is a
 self-payment. Two upstream-lnd preconditions must be met:
 
 1. lnd is started with `--allow-circular-route`. Without it,
@@ -578,11 +578,11 @@ Both are now wired into `lnd/scripts/itest_sui_single_coin.sh`:
 script asserts a successful Alice → Alice payment with a non-zero
 preimage, so this stays regression-tested.
 
-For paycli's hosted route, this means an Alice-funded wallet *can*
+For lokapay's hosted route, this means an Alice-funded wallet *can*
 pay a service whose payment backend is also Alice (e.g.
-`paycli request -H "Host: service1.com"`) once
+`lokapay request -H "Host: service1.com"`) once
 `lnd_grpc_allow_self_payment=true` is also set in agents-pay-service
-(via `paycli admin-set lnd_grpc_allow_self_payment true`).
+(via `lokapay admin-set lnd_grpc_allow_self_payment true`).
 
 ### Bob's `payinvoice --force` via the lnd CLI sometimes hangs
 

@@ -1,6 +1,6 @@
 # CLI reference
 
-`paycli` is a single binary covering the full agent-side payment flow:
+`lokapay` is a single binary covering the full agent-side payment flow:
 account creation → invoice issuance → invoice settlement → L402-protected
 HTTP requests. Two routes are supported, mutually exclusive per config:
 
@@ -16,14 +16,14 @@ needed on each call.
 ## Install
 
 ```bash
-make build           # → bin/paycli
-make install         # → $GOBIN/paycli
+make build           # → bin/lokapay
+make install         # → $GOBIN/lokapay
 ```
 
 ## Quick start
 
 ```bash
-paycli init          # interactive setup wizard
+lokapay init          # interactive setup wizard
 ```
 
 `init` walks you through endpoint pick (defaults to
@@ -32,18 +32,18 @@ and writes `~/.paycli/config.json`. Re-running on an existing config
 offers backup / abort / overwrite.
 
 For the **node** route (self-hosted lnd-sui), the wizard's guided path
-delegates to `paycli node install` + `paycli node start` — it downloads
+delegates to `lokapay node install` + `lokapay node start` — it downloads
 the loka-lnd release for your platform, boots it against Sui devnet
 or testnet, optionally hits the faucet + connects to the Loka seed
 nodes, and registers all the resulting paths in your config. Skip the
 wizard and drive it directly when scripting:
 
 ```bash
-paycli node install                                       # → ~/.paycli/lnd/<version>/bin/{lnd,lncli}
-paycli node start --network devnet --faucet --connect-seeds
-paycli node status                                        # pid + pubkey + balance + peers
-paycli node logs -f                                       # tail lnd.log
-paycli node stop                                          # graceful (lncli stop) + SIGTERM fallback
+lokapay node install                                       # → ~/.paycli/lnd/<version>/bin/{lnd,lncli}
+lokapay node start --network devnet --faucet --connect-seeds
+lokapay node status                                        # pid + pubkey + balance + peers
+lokapay node logs -f                                       # tail lnd.log
+lokapay node stop                                          # graceful (lncli stop) + SIGTERM fallback
 ```
 
 Storage layout under `~/.paycli/`: `lnd/<version>/bin/` for binaries,
@@ -62,7 +62,7 @@ rather drive it manually or script the setup.
 
 ## Multi-wallet model (hosted route)
 
-paycli mirrors LNbits' real domain shape: **one user account, many
+lokapay mirrors LNbits' real domain shape: **one user account, many
 sub-wallets**. The account holds the dashboard-login identity (username +
 password) and a JWT for operator-scope ops. Each sub-wallet has its own
 admin / invoice X-Api-Keys an agent talks to agents-pay-service with.
@@ -71,19 +71,19 @@ Typical setup:
 
 ```bash
 # 1. user registers themselves (creates "default" wallet under their account)
-paycli --base-url http://127.0.0.1:5002 \
+lokapay --base-url http://127.0.0.1:5002 \
     register --username alice --password "alice-pw" "main"
 
 # 2. user provisions one wallet per agent
-paycli wallets add agent_research
-paycli wallets add agent_trading
-paycli wallets add agent_freebie
+lokapay wallets add agent_research
+lokapay wallets add agent_trading
+lokapay wallets add agent_freebie
 
 # 3. user (in dashboard) sees: main, agent_research, agent_trading, agent_freebie
 
 # 4. each agent gets ONE wallet's keys — export a subset of the config
 #    or just hand over wallet_id + admin_key as env vars
-paycli wallets show agent_research --reveal
+lokapay wallets show agent_research --reveal
 ```
 
 `config.json` lives at:
@@ -110,8 +110,8 @@ Selecting which wallet a command uses:
 
 | | how to pick |
 |---|---|
-| default for every command | `paycli wallets use <name>` (sets `hosted.active_wallet`) |
-| one-off override | `paycli --wallet <name> fund …` (or env `PAYCLI_WALLET=<name>`) |
+| default for every command | `lokapay wallets use <name>` (sets `hosted.active_wallet`) |
+| one-off override | `lokapay --wallet <name> fund …` (or env `PAYCLI_WALLET=<name>`) |
 
 The config file is created on `register` and updated by `login` /
 `wallets`. It stores `route` plus two route-specific sub-objects:
@@ -136,18 +136,18 @@ The config file is created on `register` and updated by `login` /
 }
 ```
 
-Older paycli builds wrote a flat schema (`base_url`, `admin_key`,
+Older lokapay builds wrote a flat schema (`base_url`, `admin_key`,
 `node_endpoint`, ... at the top level). Those configs are still loaded
-correctly — paycli folds the legacy fields into the new `hosted` /
+correctly — lokapay folds the legacy fields into the new `hosted` /
 `node` sub-objects on read, and the next `register` / `login` /
 `config set` rewrites the file in the new layout.
 
 Use **dotted keys** like `hosted.admin_key` and `node.endpoint` with
-`paycli config get/set` (run `paycli config keys` for the full list).
+`lokapay config get/set` (run `lokapay config keys` for the full list).
 
 ## Commands
 
-### `paycli register [<wallet-name>] [--route hosted|node] [--username … --password …]`
+### `lokapay register [<wallet-name>] [--route hosted|node] [--username … --password …]`
 
 **Hosted, anonymous (default)** — creates a fresh user + first wallet via
 `POST /api/v1/account`. The DB row has empty username and no password
@@ -158,11 +158,11 @@ the caller will ever use.
 > **Duplicate-alias guard:** register and `wallets add` both refuse to
 > overwrite an existing entry under the same local alias (silently
 > losing the old keys would lock you out of that wallet). When the
-> guard fires, run `paycli wallets remove <alias>` first or pass
+> guard fires, run `lokapay wallets remove <alias>` first or pass
 > `--force` to opt back into overwrite explicitly.
 
 ```bash
-paycli --base-url http://127.0.0.1:5002 register "main"
+lokapay --base-url http://127.0.0.1:5002 register "main"
 ```
 
 **Hosted, named** — when `--username` is set, switches to
@@ -170,11 +170,11 @@ paycli --base-url http://127.0.0.1:5002 register "main"
 bcrypt password hash, so the resulting account can:
 
 - log into the LNbits dashboard with username + password
-- be re-authenticated via `paycli auth-login`
+- be re-authenticated via `lokapay auth-login`
 - act as super-user / operator if its account id matches `super_user`
   or is in `lnbits_admin_users`
 
-`paycli` also fetches the auto-created wallet's keys (via
+`lokapay` also fetches the auto-created wallet's keys (via
 `GET /api/v1/wallets`, Bearer auth on the just-issued JWT) and caches
 them alongside the JWT in the config — one command, fully ready for
 subsequent `whoami` / `fund` / `topup` / `admin-set`.
@@ -183,7 +183,7 @@ subsequent `whoami` / `fund` / `topup` / `admin-set`.
 # Username must match lnbits' is_valid_username regex:
 #   ^[a-zA-Z0-9._]{2,20}$, no leading/trailing _ or ., no double __ or ..
 # Dashes / hyphens are NOT allowed.
-paycli --base-url http://127.0.0.1:5002 \
+lokapay --base-url http://127.0.0.1:5002 \
     register --username alice --password "alice-pw" --email alice@example.com \
     "alice-treasury"
 ```
@@ -192,7 +192,7 @@ If `--password` is omitted the CLI prompts on the tty.
 
 > ⚠️ **Flag-ordering caveat** (urfave/cli v2): the v2 parser stops
 > reading flags at the first positional argument. Put **all `--flag`
-> options BEFORE** the `[wallet-name]` positional. paycli detects the
+> options BEFORE** the `[wallet-name]` positional. lokapay detects the
 > wrong order and prints a helpful error rather than silently
 > falling through to the anonymous path.
 
@@ -200,29 +200,29 @@ If `--password` is omitted the CLI prompts on the tty.
 and probes `GetInfo` for sanity. Wallet name is optional in this mode.
 
 ```bash
-paycli register --route node \
+lokapay register --route node \
     --lnd-endpoint  https://127.0.0.1:8081 \
     --lnd-tls-cert  /tmp/lnd-sui-test/alice/tls.cert \
     --lnd-macaroon  /tmp/lnd-sui-test/alice/data/chain/sui/devnet/admin.macaroon
 ```
 
-### `paycli login --route hosted|node …`
+### `lokapay login --route hosted|node …`
 
 Persist existing credentials without making a remote call. Useful when
 you've provisioned the wallet/keys elsewhere.
 
 ```bash
 # hosted
-paycli login --admin-key 0123abcd... --invoice-key fedcba...
+lokapay login --admin-key 0123abcd... --invoice-key fedcba...
 
 # node
-paycli login --route node \
+lokapay login --route node \
     --lnd-endpoint  https://127.0.0.1:8081 \
     --lnd-tls-cert  /path/to/tls.cert \
     --lnd-macaroon  /path/to/admin.macaroon
 ```
 
-### `paycli whoami`
+### `lokapay whoami`
 
 * hosted: `GET /api/v1/wallet` — returns wallet name + balance.
 * node: `GET /v1/getinfo` — returns identity_pubkey, alias, channel counts.
@@ -230,7 +230,7 @@ paycli login --route node \
 (node-mode `GetInfo` against lnd-sui devnet sometimes errors with the
 chain-backend's pprof page — see `docs/sdk.md#known-issue-with-lnd-sui-devnet`.)
 
-### `paycli fund --amount N [--unit sat|mist|sui|<fiat>] [--memo …] [--expiry seconds] [--via stripe|paypal] [--open]`
+### `lokapay fund --amount N [--unit sat|mist|sui|<fiat>] [--memo …] [--expiry seconds] [--via stripe|paypal] [--open]`
 
 Generate a BOLT11 invoice (or fiat checkout URL) for receiving funds
 into the active wallet.
@@ -241,7 +241,7 @@ into the active wallet.
 |---|---|---|
 | `sat` (default) | sub-unit, integer | `--amount 1000` (1000 sat / MIST under SUI bridge) |
 | `mist` | sub-unit, integer (alias of sat under SUI) | `--amount 1000 --unit mist` |
-| `sui` | **whole SUI** — paycli multiplies by 1e9 to MIST on the wire | `--amount 0.1 --unit sui` (100M MIST) |
+| `sui` | **whole SUI** — lokapay multiplies by 1e9 to MIST on the wire | `--amount 0.1 --unit sui` (100M MIST) |
 | `USD` / `EUR` / … | **fiat** — server's oracle does the conversion (hosted only) | `--amount 0.10 --unit USD` |
 
 Why no `--unit btc`? 1 BTC ≈ $100k+, so day-to-day LN amounts are
@@ -257,9 +257,9 @@ think in SUI.
   oracle, so fiat units are rejected.
 
 ```bash
-paycli fund --amount 0.1 --unit sui --memo "topup"   # 0.1 SUI
-paycli fund --amount 100000000 --memo "topup"        # 100M MIST (same)
-paycli fund --amount 0.10 --unit USD --memo "topup"  # hosted-route oracle: USD → sat → BOLT11
+lokapay fund --amount 0.1 --unit sui --memo "topup"   # 0.1 SUI
+lokapay fund --amount 100000000 --memo "topup"        # 100M MIST (same)
+lokapay fund --amount 0.10 --unit USD --memo "topup"  # hosted-route oracle: USD → sat → BOLT11
 ```
 
 **Fiat onramp (Stripe / PayPal): `--via {stripe,paypal}`**
@@ -281,11 +281,11 @@ Constraints:
   the webhook URL).
 
 ```bash
-paycli fund --amount 5    --unit USD --via stripe              # → Stripe checkout URL
-paycli fund --amount 9.99 --unit USD --via paypal --open       # → PayPal approve_url, opens browser
+lokapay fund --amount 5    --unit USD --via stripe              # → Stripe checkout URL
+lokapay fund --amount 9.99 --unit USD --via paypal --open       # → PayPal approve_url, opens browser
 ```
 
-### `paycli pay <bolt11>`
+### `lokapay pay <bolt11>`
 
 Settle a BOLT11 invoice from the configured wallet.
 
@@ -294,32 +294,32 @@ Settle a BOLT11 invoice from the configured wallet.
   send via the macaroon.
 
 ```bash
-paycli pay lnbc100u1p3...
+lokapay pay lnbc100u1p3...
 ```
 
-### `paycli history [--limit N] [--offset M]`
+### `lokapay history [--limit N] [--offset M]`
 
 List recent payments on the configured wallet.
 
-### `paycli config show [--reveal] [--path]`
+### `lokapay config show [--reveal] [--path]`
 
 Print the active config. Secrets (admin key, invoice key, bearer token)
 are masked unless `--reveal` is passed. `--path` prints just the resolved
 config file path.
 
-### `paycli config get <key>` / `paycli config set <key> <value>`
+### `lokapay config get <key>` / `lokapay config set <key> <value>`
 
 Edit a single config field without hand-touching JSON. Keys are dotted
-paths matching the on-disk JSON layout. Run `paycli config keys` for
+paths matching the on-disk JSON layout. Run `lokapay config keys` for
 the full list.
 
 ```bash
-paycli config set hosted.base_url http://127.0.0.1:5002
-paycli config set route node
-paycli config get node.endpoint
+lokapay config set hosted.base_url http://127.0.0.1:5002
+lokapay config set route node
+lokapay config get node.endpoint
 ```
 
-### `paycli services [--prism-url …] [--prism-macaroon …] [-s X] [--insecure]`
+### `lokapay services [--prism-url …] [--prism-macaroon …] [-s X] [--insecure]`
 
 List the L402 service catalog from a Prism gateway. The underlying
 `GET /api/admin/services` is unauthenticated on Prism (see
@@ -331,23 +331,23 @@ case-insensitive substring filter on name / host / path.
 
 ```bash
 # default — talk to the hosted gateway
-paycli services -s freebie
+lokapay services -s freebie
 
 # self-hosted local dev
-paycli services \
+lokapay services \
     --prism-url       https://127.0.0.1:8080 \
     --insecure
 ```
 
 [prism-auth]: https://github.com/loka-network/aperture/blob/loka/admin/auth.go
 
-### `paycli auth-login --username … [--password …]` (operator)
+### `lokapay auth-login --username … [--password …]` (operator)
 
 Exchange super-user / admin credentials for a JWT and cache it in the
-config. Required before `paycli topup`. Password may be supplied via
+config. Required before `lokapay topup`. Password may be supplied via
 `--password` or read interactively from the tty.
 
-### `paycli events [-n N] [-t TYPE] [-r ROUTE] [-s RFC3339] [--json] [--path]`
+### `lokapay events [-n N] [-t TYPE] [-r ROUTE] [-s RFC3339] [--json] [--path]`
 
 Show the local payment event log at `~/.paycli/events.jsonl`. Every
 state-changing payment command — `register` (hosted), `fund`, `pay`,
@@ -355,11 +355,11 @@ state-changing payment command — `register` (hosted), `fund`, `pay`,
 to this file as it runs.
 
 ```bash
-paycli events                                    # last 20, human-readable
-paycli events -n 100 -t l402_paid                # last 100 L402 settlements
-paycli events -r hosted -s 2026-05-07T00:00:00Z  # hosted-route events from today
-paycli events --json | jq                        # raw JSONL for tooling
-paycli events --path                             # just print the log path
+lokapay events                                    # last 20, human-readable
+lokapay events -n 100 -t l402_paid                # last 100 L402 settlements
+lokapay events -r hosted -s 2026-05-07T00:00:00Z  # hosted-route events from today
+lokapay events --json | jq                        # raw JSONL for tooling
+lokapay events --path                             # just print the log path
 ```
 
 Set `PAYCLI_EVENT_LOG=off` (or `0` / `false`) to disable logging
@@ -381,7 +381,7 @@ The schema fields:
 | `payment_request` | bolt11 (for invoice_created and l402_paid) |
 | `error` | populated on failure |
 
-### `paycli payment-status <hash> [--wallet …] [--json]`
+### `lokapay payment-status <hash> [--wallet …] [--json]`
 
 Refresh + print one payment's current state. Hits
 `GET /api/v1/payments/{hash}` on agents-pay-service, which forces
@@ -390,7 +390,7 @@ Useful when a previous fund / pay / request returned `status=pending`
 and you want the latest LN-level truth without grepping curl.
 
 ```bash
-$ paycli payment-status 93a6642ff4e67795...
+$ lokapay payment-status 93a6642ff4e67795...
 hash:     93a6642ff4e67795860f059f1d43b1523a2bf6967434bcabe76a4df33f6ff159
 paid:     false
 status:   pending
@@ -409,7 +409,7 @@ SUCCEEDED/FAILED on this fork. The wallet balance has been
 optimistically pre-debited; if lnd eventually reports FAILED the
 balance gets refunded automatically.
 
-### `paycli rate [<currency=USD>]`
+### `lokapay rate [<currency=USD>]`
 
 Hits `GET /api/v1/rate/<currency>` on agents-pay-service and prints
 the oracle's chain-aware view. On a SUI deployment the labels read
@@ -417,33 +417,33 @@ the oracle's chain-aware view. On a SUI deployment the labels read
 "sat per USD". Open endpoint — no key required.
 
 ```bash
-$ paycli rate
+$ lokapay rate
 currency:    USD
 price:       1.0070 USD per 1 SUI
 rate:        993048659.3843 MIST per 1 USD
 (per quote:  1 USD ≈ 993048659.3843 MIST; 1 SUI ≈ 1.0070 USD)
 
-$ paycli rate EUR
+$ lokapay rate EUR
 currency:    EUR
 price:       0.8557 EUR per 1 SUI
 rate:        1168648889.9589 MIST per 1 EUR
 ```
 
-After every successful `paycli fund` / `paycli pay`, paycli also
+After every successful `lokapay fund` / `lokapay pay`, lokapay also
 prints a one-line summary on stderr decoding the msat amount into
 the chain's whole unit + the configured fiat:
 
 ```
-$ paycli fund --amount 50000000 --memo demo
+$ lokapay fund --amount 50000000 --memo demo
 { ...JSON... }
 ≈ 0.050000 SUI  (50000000 MIST ≈ 0.0500 USD)
 ```
 
 The chain (SUI vs BTC) is auto-detected from the response's
 `extra.wallet_sui_rate` / `extra.wallet_btc_rate` field, so a single
-paycli binary works against both chain modes of agents-pay-service.
+lokapay binary works against both chain modes of agents-pay-service.
 
-### `paycli admin-set <key> <value>` (operator)
+### `lokapay admin-set <key> <value>` (operator)
 
 PATCH a single field on `agents-pay-service`'s admin settings via
 `PATCH /admin/api/v1/settings`. The value is JSON-parsed when possible
@@ -455,8 +455,8 @@ issued by the same lnd it's funded from (e.g. paying a Prism paywall
 that's authenticated by the same node):
 
 ```bash
-paycli auth-login --username admin                       # one-time
-paycli admin-set lnd_grpc_allow_self_payment true        # persists to DB
+lokapay auth-login --username admin                       # one-time
+lokapay admin-set lnd_grpc_allow_self_payment true        # persists to DB
 pkill -f 'lnbits --port 5002' && lnbits --port 5002 &    # restart so the
                                                          # wallet driver
                                                          # picks up the flag
@@ -466,7 +466,7 @@ Note: env vars like `LND_GRPC_ALLOW_SELF_PAYMENT=true` look like they
 should work but are silently overridden at boot — lnbits' admin-DB
 contents shadow editable env values. Use `admin-set` instead.
 
-### `paycli topup --wallet-id … --amount N` (operator)
+### `lokapay topup --wallet-id … --amount N` (operator)
 
 Credit a hosted wallet directly (faucet) via
 `PUT /users/api/v1/balance`. Bypasses LN routing — internally
@@ -476,28 +476,28 @@ wallets without round-tripping through a channel.
 
 Negative `--amount` debits the wallet.
 
-### `paycli wallets list | add | use | show | remove`
+### `lokapay wallets list | add | use | show | remove`
 
 The `wallets` group manages the local map of sub-wallets the active
 account knows about. See § "Multi-wallet model" above for the
 end-to-end shape.
 
 ```bash
-paycli wallets list                        # show all entries (active marked *)
-paycli wallets add <alias> [--use]         # create on server + persist locally
-paycli wallets use <alias>                 # switch active_wallet
-paycli wallets show [<alias>] [--reveal]   # print one entry's keys
-paycli wallets remove <alias>              # drop from local config (no server delete)
+lokapay wallets list                        # show all entries (active marked *)
+lokapay wallets add <alias> [--use]         # create on server + persist locally
+lokapay wallets use <alias>                 # switch active_wallet
+lokapay wallets show [<alias>] [--reveal]   # print one entry's keys
+lokapay wallets remove <alias>              # drop from local config (no server delete)
 ```
 
 `wallets add` calls `POST /api/v1/wallet` with the cached super-user
-JWT — set up via `paycli register --username` or `paycli auth-login`.
+JWT — set up via `lokapay register --username` or `lokapay auth-login`.
 The new wallet's keys are auto-saved into `hosted.wallets[<alias>]`.
 
 `wallets show` masks keys by default; pass `--reveal` to print plaintext
 when you need to copy them into an agent's environment.
 
-### `paycli request <url> [--method GET] [-H 'Key: Value'] [-d body] [-i] [--insecure-target] [--max-retries 1]`
+### `lokapay request <url> [--method GET] [-H 'Key: Value'] [-d body] [-i] [--insecure-target] [--max-retries 1]`
 
 HTTP request with automatic L402 (HTTP 402) payment handling.
 
@@ -516,7 +516,7 @@ just needs whatever macaroon is configured — usually `admin.macaroon`.
 
 ```bash
 # Local Prism (self-signed cert, hostregexp routes by Host header):
-paycli request \
+lokapay request \
     -H "Host: service1.com" \
     --insecure-target -i \
     https://127.0.0.1:8080/freebieservice
@@ -524,7 +524,7 @@ paycli request \
 
 Notes:
 
-* The `Host` header is special — `paycli` recognizes it and sets
+* The `Host` header is special — `lokapay` recognizes it and sets
   `req.Host` rather than `req.Header["Host"]` (which `net/http` ignores).
 * Tokens are cached in-process for the lifetime of the command; running the
   command twice in one shell still pays twice. Long-lived processes that
@@ -544,14 +544,14 @@ End-to-end flow:
 
 ```bash
 # 1. provision an agent wallet
-paycli --base-url http://127.0.0.1:5002 register "agent-001"
+lokapay --base-url http://127.0.0.1:5002 register "agent-001"
 
 # 2. top it up — print the invoice, have an external wallet pay it
-paycli fund --amount 100000 --memo "agent budget"
+lokapay fund --amount 100000 --memo "agent budget"
 # (pay the printed bolt11 from another wallet/lncli)
 
 # 3. consume a paid API behind Prism
-paycli request \
+lokapay request \
     -H "Host: service1.com" \
     --insecure-target -i \
     https://127.0.0.1:8080/api/some-endpoint
