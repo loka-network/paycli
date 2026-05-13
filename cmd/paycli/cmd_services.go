@@ -9,25 +9,24 @@ import (
 
 // cmdServices lists the L402 service catalog from a Prism gateway.
 //
-// Important: the underlying API (`GET /api/admin/services`) is currently
-// admin-gated by Prism — there is no public/anon catalog endpoint. This
-// command therefore requires the admin macaroon, making it primarily
-// useful for Prism operators and integration testing rather than
-// end-user discovery. Once Prism exposes a public catalog, this command
-// will switch to it transparently.
+// GET /api/admin/services is exposed without authentication by Prism
+// (see loka-prism-l402/admin/auth.go), so end users can render a service
+// picker before paying. The --prism-macaroon flag is still accepted for
+// deployments that re-enable auth or hand out limited-scope macaroons.
 func cmdServices() *cli.Command {
 	return &cli.Command{
 		Name:  "services",
-		Usage: "List services exposed by a Prism gateway (requires its admin macaroon)",
+		Usage: "List services exposed by a Prism gateway",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "prism-url", Required: true, Usage: "Prism base URL, e.g. https://127.0.0.1:8080"},
-			&cli.StringFlag{Name: "prism-macaroon", Required: true, Usage: "path to Prism's admin.macaroon"},
+			&cli.StringFlag{Name: "prism-url", Value: sdk.DefaultPrismURL, Usage: "Prism base URL"},
+			&cli.StringFlag{Name: "prism-macaroon", Usage: "path to Prism's admin.macaroon (optional; only needed on auth-gated deployments)"},
 			&cli.BoolFlag{Name: "insecure", Usage: "skip TLS verification (local dev)"},
 			&cli.StringFlag{Name: "search", Aliases: []string{"s"}, Usage: "filter services by name / host / path substring (case-insensitive)"},
 		},
 		Action: func(c *cli.Context) error {
-			opts := []sdk.PrismOption{
-				sdk.WithPrismMacaroonFile(c.String("prism-macaroon")),
+			var opts []sdk.PrismOption
+			if mac := c.String("prism-macaroon"); mac != "" {
+				opts = append(opts, sdk.WithPrismMacaroonFile(mac))
 			}
 			if c.Bool("insecure") {
 				opts = append(opts, sdk.WithPrismInsecureTLS())

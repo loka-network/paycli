@@ -13,13 +13,17 @@ import (
 	"time"
 )
 
+// DefaultPrismURL is the hosted Loka Prism gateway. Override per
+// NewPrismClient call (or via paycli --prism-url) for self-hosted setups.
+const DefaultPrismURL = "https://prism.loka.cash"
+
 // PrismClient calls Prism's admin gRPC-gateway REST API. Auth is the same
 // shape as lnd: hex-encoded macaroon in the Grpc-Metadata-Macaroon header.
 //
 // The relevant endpoint for paycli is GET /api/admin/services — the
-// service catalog. Other admin operations (CreateService, RevokeToken,
-// stats) are out of scope for an end-user CLI; Prism operators have their
-// own dashboard.
+// service catalog, which Prism exposes without authentication so end-user
+// clients can render a service picker. Other admin operations
+// (CreateService, RevokeToken, stats) remain macaroon-gated.
 type PrismClient struct {
 	Endpoint    string
 	HTTPClient  *http.Client
@@ -64,18 +68,21 @@ func WithPrismTimeout(d time.Duration) PrismOption {
 
 // NewPrismClient builds a client targeting the given Prism admin endpoint
 // (typically the same host:port as the proxy itself, e.g. https://127.0.0.1:8080).
+// An empty endpoint falls back to DefaultPrismURL.
+//
+// A macaroon is *optional* — callers that only invoke unauthenticated read
+// methods (currently ListServices, GetHealth) can leave it unset. Methods
+// that need admin auth will fail on the server with Unauthenticated; the
+// SDK doesn't second-guess which method needs what.
 func NewPrismClient(endpoint string, opts ...PrismOption) (*PrismClient, error) {
 	if endpoint == "" {
-		return nil, fmt.Errorf("paycli: NewPrismClient: endpoint required")
+		endpoint = DefaultPrismURL
 	}
 	cfg := &prismOpts{timeout: 30 * time.Second}
 	for _, o := range opts {
 		if err := o(cfg); err != nil {
 			return nil, err
 		}
-	}
-	if cfg.macHex == "" {
-		return nil, fmt.Errorf("paycli: NewPrismClient: admin macaroon is required")
 	}
 
 	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
@@ -117,15 +124,19 @@ type prismListServicesResp struct {
 	Services []PrismService `json:"services"`
 }
 
-// ListServices fetches the service catalog. The endpoint requires the admin
-// macaroon — there is no public/anon catalog API on Prism today.
+// ListServices fetches the service catalog. The endpoint is unauthenticated
+// on the Prism side (see admin/auth.go's unauthenticatedMethods); the SDK
+// still forwards a macaroon when one is configured, in case a deployment
+// re-enables auth or future Prism versions add per-service ACLs.
 func (p *PrismClient) ListServices(ctx context.Context) ([]PrismService, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.Endpoint+"/api/admin/services", nil)
 	if err != nil {
 		return nil, fmt.Errorf("paycli: build request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Grpc-Metadata-Macaroon", p.MacaroonHex)
+	if p.MacaroonHex != "" {
+		req.Header.Set("Grpc-Metadata-Macaroon", p.MacaroonHex)
+	}
 
 	resp, err := p.HTTPClient.Do(req)
 	if err != nil {

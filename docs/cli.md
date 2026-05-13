@@ -20,6 +20,21 @@ make build           # → bin/paycli
 make install         # → $GOBIN/paycli
 ```
 
+## Quick start
+
+```bash
+paycli init          # interactive setup wizard (recommended for new users)
+```
+
+`init` walks you through endpoint pick (defaults to
+`https://agents-pay.loka.cash`), register-new vs import-existing-keys,
+and writes `~/.paycli/config.json`. Re-running on an existing config
+offers backup / abort / overwrite.
+
+Every step the wizard does is also reachable as an individual command
+(`register`, `login`, `config set`, …) — see below if you'd rather drive
+it manually or script the setup.
+
 ## Global flags
 
 | Flag | Env var | Description |
@@ -287,19 +302,27 @@ paycli config set route node
 paycli config get node.endpoint
 ```
 
-### `paycli services --prism-url … --prism-macaroon … [-s X] [--insecure]`
+### `paycli services [--prism-url …] [--prism-macaroon …] [-s X] [--insecure]`
 
 List the L402 service catalog from a Prism gateway. The underlying
-`GET /api/admin/services` is admin-gated by Prism today, so this command
-takes the gateway operator's `admin.macaroon`. With `--search`,
-case-insensitive substring filter on name/host/path.
+`GET /api/admin/services` is unauthenticated on Prism (see
+[`loka-prism-l402/admin/auth.go`'s `unauthenticatedMethods`][prism-auth]),
+so neither flag is required — defaults target the hosted gateway and
+no macaroon. `--prism-macaroon` is still accepted for deployments that
+re-enable auth or hand out limited-scope macaroons. `--search` is a
+case-insensitive substring filter on name / host / path.
 
 ```bash
+# default — talk to the hosted gateway
+paycli services -s freebie
+
+# self-hosted local dev
 paycli services \
     --prism-url       https://127.0.0.1:8080 \
-    --prism-macaroon  /path/to/prism/.prism/admin.macaroon \
     --insecure
 ```
+
+[prism-auth]: https://github.com/loka-network/aperture/blob/loka/admin/auth.go
 
 ### `paycli auth-login --username … [--password …]` (operator)
 

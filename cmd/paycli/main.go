@@ -45,6 +45,7 @@ func main() {
 			return nil
 		},
 		Commands: []*cli.Command{
+			cmdInit(),
 			cmdRegister(),
 			cmdLogin(),
 			cmdWhoami(),
