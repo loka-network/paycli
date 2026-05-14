@@ -1,0 +1,45 @@
+# Triggered on every push of a v* tag. Builds release archives for
+# linux/darwin/windows × amd64/arm64 (except windows-arm64), publishes
+# them as a GitHub Release, and — if HOMEBREW_TAP_TOKEN is configured —
+# updates the loka-network/homebrew-tap formula.
+#
+# Cut a release locally:
+#   git tag -a v0.1.0 -m "first lokapay release"
+#   git push origin v0.1.0
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Required for the changelog generator to walk back through tags.
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Set this secret to a PAT with `repo` scope on the tap repo to
+          # auto-publish the Homebrew formula. Without it, the brews step
+          # is silently skipped (skip_upload: auto in .goreleaser.yml).
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

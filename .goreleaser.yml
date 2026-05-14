@@ -1,0 +1,134 @@
+# GoReleaser config — produces multi-platform release archives + checksums
+# + (optionally) a Homebrew formula on every `v*` tag.
+#
+# Required GitHub repo secrets at release time:
+#   GITHUB_TOKEN          (auto, scoped to releases)
+#   HOMEBREW_TAP_TOKEN    (optional — PAT with write access to loka-network/homebrew-tap;
+#                          if absent, the brews step is skipped)
+#
+# Schema version 2 (goreleaser 2.x). See https://goreleaser.com/customization/.
+version: 2
+
+project_name: lokapay
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: lokapay
+    main: ./cmd/lokapay
+    binary: lokapay
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      # No upstream loka-lnd release for windows/arm64 → skip the lokapay
+      # build for that combo too so users don't pull a binary they can't
+      # pair with a node.
+      - goos: windows
+        goarch: arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }} -X main.commit={{ .ShortCommit }} -X main.date={{ .Date }}
+
+archives:
+  - id: lokapay
+    # Match the install.sh expectation exactly: lokapay_<version>_<os>_<arch>.{tar.gz,zip}
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE*
+      - README.md
+      - docs/cli.md
+      - docs/sdk.md
+      - docs/fiat-onramp.md
+
+# Standalone artifacts uploaded alongside the archives so users can curl
+# them directly off the release page.
+extra_files:
+  - glob: scripts/install.sh
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+      - "Merge pull request"
+      - "Merge branch"
+  groups:
+    - title: "Features"
+      regexp: "^.*feat[(\\w)]*:+.*$"
+      order: 0
+    - title: "Bug fixes"
+      regexp: "^.*fix[(\\w)]*:+.*$"
+      order: 1
+    - title: "Other"
+      order: 999
+
+brews:
+  - name: lokapay
+    repository:
+      owner: loka-network
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    # The brews step is skipped when HOMEBREW_TAP_TOKEN is unset — see
+    # `skip_upload: auto` below — so a release won't fail just because
+    # the tap repo isn't set up yet.
+    skip_upload: auto
+    directory: Formula
+    homepage: "https://github.com/loka-network/paycli"
+    description: "Loka Payment CLI + Go SDK — pay L402 APIs over Lightning on Sui"
+    license: "MIT"
+    install: |
+      bin.install "lokapay"
+    test: |
+      system "#{bin}/lokapay", "--version"
+    commit_author:
+      name: ai-chen2050
+      email: 1033467071@qq.com
+
+release:
+  github:
+    owner: loka-network
+    name: paycli
+  draft: false
+  prerelease: auto
+  name_template: "lokapay {{ .Version }}"
+  header: |
+    ## lokapay {{ .Version }}
+
+    Install:
+
+    ```bash
+    # curl
+    curl -fsSL https://github.com/loka-network/paycli/releases/download/{{ .Tag }}/install.sh | sh
+
+    # Homebrew
+    brew install loka-network/tap/lokapay
+
+    # Go
+    go install github.com/loka-network/paycli/cmd/lokapay@{{ .Tag }}
+    ```

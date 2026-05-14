@@ -43,6 +43,35 @@ func cmdNode() *cli.Command {
 			cmdNodeUpgrade(),
 			cmdNodeStatus(),
 			cmdNodeLogs(),
+			cmdNodeFaucet(),
+		},
+	}
+}
+
+func cmdNodeFaucet() *cli.Command {
+	return &cli.Command{
+		Name:  "faucet",
+		Usage: "Request test SUI for the managed lnd's wallet (devnet / testnet only)",
+		Description: "Derives a Sui address via `lncli newaddress p2wkh` and POSTs " +
+			"it to the network's faucet (https://faucet.{devnet,testnet}.sui.io/v2/gas). " +
+			"Useful when the on-chain balance has been spent down opening channels " +
+			"and you need to top up without rerunning the full `node start` bring-up.",
+		Action: func(c *cli.Context) error {
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			if cfg.Node.Network == "" {
+				return fail("node faucet: no managed lnd recorded — run `lokapay node install` + `lokapay node start` first")
+			}
+			netCfg, ok := sdk.SuiNetworkConfigs[sdk.SuiNetwork(cfg.Node.Network)]
+			if !ok {
+				return fail("node faucet: unknown saved network %q", cfg.Node.Network)
+			}
+			if netCfg.FaucetURL == "" {
+				return fail("node faucet: no faucet on %s — fund the address manually", cfg.Node.Network)
+			}
+			return fundWalletFromFaucet(c.Context, cfg, netCfg)
 		},
 	}
 }

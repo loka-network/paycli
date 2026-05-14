@@ -1,124 +1,82 @@
-# paycli
+# lokapay
 
-Loka Payment CLI + Go SDK. Single binary, single import path, HTTP-only —
-no LND build dependency.
-
-paycli supports **two routes** out of one binary:
-
-| Route | Wallet location | Backend |
-|---|---|---|
-| **hosted** | Loka custodial server | `agents-pay-service` REST + `X-Api-Key` |
-| **node** | User's own LN node | `lnd-sui` REST gateway + macaroon |
-
-The same `paycli request` command transparently pays L402 (HTTP 402)
-challenges via whichever route is configured — the L402Doer takes a
-`Wallet` interface and both backends satisfy it.
+Loka Payment CLI + Go SDK. Pay L402-protected (HTTP 402) APIs over
+Lightning on the Sui chain — either via the hosted Loka custodial
+wallet or your own lnd node, with the same one-liner CLI.
 
 ```
-┌──────────────┐  hosted: X-Api-Key   ┌────────────────────────┐
-│              │  ──────────────────► │  agents-pay-service    │ ──► lnd-sui
-│   paycli     │                      │   (custodial wallet)   │
-│  (CLI/SDK)   │                      └────────────────────────┘
-│              │
-│              │  node: macaroon + TLS  ┌────────────────────────┐
-│              │  ────────────────────► │  lnd-sui REST gateway  │
-└──────────────┘                        └────────────────────────┘
-       │                                       ▲
-       │   L402 challenge / preimage replay    │
-       └──────────────────► Prism ─────────────┘
+┌──────────────┐  hosted: agents-pay.loka.cash   ┌─────────────────────┐
+│   lokapay    │ ───────────────────────────────►│  agents-pay-service │
+│  (CLI/SDK)   │                                 │   + lnd backend     │
+│              │  node:   your own loka-lnd      └─────────────────────┘
+│              │ ───────────────────────────────► loka-lnd (Sui)
+└──────────────┘
+       │   L402 challenge / preimage replay
+       └──────► Prism (prism.loka.cash)
 ```
 
-## Layout
+## Install
 
-```
-pkg/sdk/        Go client SDK (importable as github.com/loka-network/paycli/pkg/sdk)
-cmd/paycli/     CLI binary built from the SDK
-docs/           SDK + CLI reference, integration-test playbook
-scripts/        Local integration-test runner
-tests/          Build-tag-gated integration tests against a live local stack
+```bash
+# curl (recommended — works on macOS / Linux)
+curl -fsSL https://github.com/loka-network/paycli/releases/latest/download/install.sh | sh
+
+# Homebrew
+brew install loka-network/tap/lokapay
+
+# Go (installs from main; requires Go 1.25+)
+go install github.com/loka-network/paycli/cmd/lokapay@latest
 ```
 
 ## Quick start
 
-### Hosted route (custodial)
-
 ```bash
-make build                              # → bin/lokapay
-bin/lokapay --base-url http://127.0.0.1:5002 register "main"
-bin/lokapay whoami
-bin/lokapay fund --amount 1000 --memo "topup"
-bin/lokapay request -H "Host: service1.com" \
-    --insecure-target -i \
-    https://127.0.0.1:8080/freebieservice
+lokapay init                                   # one-shot interactive setup
+lokapay services                               # browse Prism's service catalog
+lokapay node faucet                            # (devnet/testnet only) top up test SUI
+lokapay request -i https://merchant/foo        # pays the 402 challenge, returns the response
 ```
 
-### Node route (self-custody)
+`init` handles all the boring stuff in a single wizard: hosted vs
+self-hosted route, endpoint URL (defaults to `agents-pay.loka.cash` /
+`prism.loka.cash`), account / wallet keys, and — on the self-custody
+path — downloads and starts a loka-lnd for you. Re-run `lokapay init`
+any time to reconfigure.
 
-```bash
-make build
-bin/lokapay register --route node \
-    --lnd-endpoint  https://127.0.0.1:8081 \
-    --lnd-tls-cert  /tmp/lnd-sui-test/alice/tls.cert \
-    --lnd-macaroon  /tmp/lnd-sui-test/alice/data/chain/sui/devnet/admin.macaroon
-bin/lokapay whoami
-bin/lokapay fund --amount 1000 --memo "node-mode invoice"
-bin/lokapay request -H "Host: service1.com" --insecure-target -i \
-    https://127.0.0.1:8080/freebieservice    # same command, different backend
+Persistent state lives at `~/.lokapay/` (auto-migrated from the legacy
+`~/.paycli/` on first run). For everything else — fund / pay / topup /
+fiat onramp / managed-node lifecycle / SDK usage — read on:
+
+## Docs
+
+- **[CLI reference](docs/cli.md)** — every command, every flag
+- **[SDK reference](docs/sdk.md)** — `github.com/loka-network/paycli/pkg/sdk`
+- **[Fiat onramp](docs/fiat-onramp.md)** — Stripe / PayPal operator setup
+- **[Manual test playbook](docs/manual-test.md)** — bring up the full local stack and verify
+
+## Layout
+
 ```
-
-Config lives at `~/.lokapay/config.json` (override with `$PAYCLI_CONFIG`).
-Switching routes is just `paycli login --route ...` — config remembers
-which one is active.
-
-## SDK usage
-
-```go
-import "github.com/loka-network/paycli/pkg/sdk"
-
-// Hosted route
-hosted := sdk.New("http://127.0.0.1:5002", sdk.WithAdminKey(adminKey))
-
-// Node route — talks to the user's own lnd-sui REST gateway
-node, _ := sdk.NewNodeClient("https://127.0.0.1:8081",
-    sdk.WithNodeTLSCertFile("/path/to/tls.cert"),
-    sdk.WithNodeMacaroonFile("/path/to/admin.macaroon"),
-)
-
-// L402Doer takes anything that satisfies sdk.Wallet — both clients do.
-doer := sdk.NewL402Doer(node) // or hosted
-req, _ := http.NewRequest("GET", "https://api.example.com/paid", nil)
-resp, _ := doer.Do(ctx, req) // 402 → pay → retry, transparent
+pkg/sdk/         Go client SDK (importable as github.com/loka-network/paycli/pkg/sdk)
+cmd/lokapay/     CLI binary
+docs/            CLI + SDK + onramp + integration-test playbooks
+scripts/         install.sh + local integration-test runner
+.goreleaser.yml  release config — tag-driven multi-platform build
 ```
-
-See [`docs/sdk.md`](docs/sdk.md) and [`docs/cli.md`](docs/cli.md) for full
-reference. For a step-by-step end-to-end verification (build, bring up
-the local stack from scratch, run both routes, observe wallet balance
-deltas), follow [`docs/manual-test.md`](docs/manual-test.md).
-
-## Tests
-
-```bash
-make test                # unit tests (httptest mocks, no external deps)
-scripts/integration-test.sh  # full e2e against local lnd-sui + agents-pay-service + prism
-```
-
-Read [`docs/integration-test.md`](docs/integration-test.md) for the local
-service prerequisites.
 
 ## Design
 
-Why not embed this into `lnd/cmd/lncli`? Three reasons:
+Why a separate binary instead of folding this into `lncli`?
 
 1. **Upstream rebase friction** — `lncli` is vendored from upstream lnd; mixing
-   Loka custodial REST commands into `cmd/commands/*.go` makes every upstream
+   custodial REST commands into `cmd/commands/*.go` makes every upstream
    merge harder.
-2. **Different audience and scope** — `lncli` is a node operator's gRPC tool;
-   `lokapay` is an end-user / AI-agent payments CLI with HTTP and L402 logic.
-   Route A users keep using `lncli` directly.
-3. **Decoupled dependencies** — `lokapay` only needs `net/http` plus
-   `urfave/cli`. No need to drag the whole lnd build tree into the agent
-   image.
+2. **Different audience, different scope** — `lncli` is a node operator's
+   gRPC tool. `lokapay` is an end-user / AI-agent payments CLI with HTTP,
+   L402, fiat-onramp, and managed-node lifecycle on top.
+3. **Decoupled dependencies** — `lokapay` needs `net/http` + `urfave/cli` +
+   `survey/v2`. No lnd build tree, no SUI compiler.
 
 The SDK is the seam: any future Go integration (loka-cloud agents, MCP
-servers, dashboards) imports `pkg/sdk` rather than reimplementing REST + L402
-logic.
+servers, dashboards) imports `pkg/sdk` instead of reimplementing
+REST + L402 + Stripe + node-install logic.
