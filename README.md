@@ -1,15 +1,25 @@
 # lokapay
 
 Loka Payment CLI + Go SDK. Pay L402-protected (HTTP 402) APIs over
-Lightning on the Sui chain — either via the hosted Loka custodial
-wallet or your own lnd node, with the same one-liner CLI.
+Lightning — settlement chain is whatever your lnd backend speaks
+(today: BTC and SUI; EVM-class chains on the roadmap), and the same
+one-liner CLI works against two custody models:
+
+| Route | Wallet location | Backend | When to pick it |
+|---|---|---|---|
+| **hosted** (default) | Loka custodial server | `agents-pay-service` REST + `X-Api-Key` — defaults to `https://agents-pay.loka.cash` | "I just want to pay things; don't make me run a node." |
+| **node** | Your own machine | `lnd-sui` / `lnd-btc` REST gateway + macaroon — `lokapay node` can install + run a loka-lnd for you | "I want self-custody and direct Lightning channels." |
+
+You pick the route once during `lokapay init`; every subsequent
+`request` / `fund` / `pay` command dispatches transparently — the
+L402Doer takes a `Wallet` interface and both backends satisfy it.
 
 ```
 ┌──────────────┐  hosted: agents-pay.loka.cash   ┌─────────────────────┐
 │   lokapay    │ ───────────────────────────────►│  agents-pay-service │
 │  (CLI/SDK)   │                                 │   + lnd backend     │
-│              │  node:   your own loka-lnd      └─────────────────────┘
-│              │ ───────────────────────────────► loka-lnd (Sui)
+│              │  node:   your own lnd           └─────────────────────┘
+│              │ ───────────────────────────────► loka-lnd (BTC / SUI / …)
 └──────────────┘
        │   L402 challenge / preimage replay
        └──────► Prism (prism.loka.cash)
