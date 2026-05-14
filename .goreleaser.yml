@@ -54,11 +54,6 @@ archives:
       - docs/sdk.md
       - docs/fiat-onramp.md
 
-# Standalone artifacts uploaded alongside the archives so users can curl
-# them directly off the release page.
-extra_files:
-  - glob: scripts/install.sh
-
 checksum:
   name_template: "checksums.txt"
   algorithm: sha256
@@ -117,6 +112,12 @@ release:
   draft: false
   prerelease: auto
   name_template: "lokapay {{ .Version }}"
+  # Standalone artifacts uploaded alongside the archives so users can
+  # curl them directly off the release page. (`extra_files` is a
+  # release-scoped key in goreleaser v2; placing it at top level fails
+  # YAML schema validation.)
+  extra_files:
+    - glob: scripts/install.sh
   header: |
     ## lokapay {{ .Version }}
 
@@ -126,8 +127,8 @@ release:
     # curl
     curl -fsSL https://github.com/loka-network/paycli/releases/download/{{ .Tag }}/install.sh | sh
 
-    # Homebrew
-    brew install loka-network/tap/lokapay
+    # Homebrew — coming soon (tap repo + PAT not yet provisioned)
+    # brew install loka-network/tap/lokapay
 
     # Go
     go install github.com/loka-network/paycli/cmd/lokapay@{{ .Tag }}
