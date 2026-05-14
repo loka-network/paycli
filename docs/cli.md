@@ -285,6 +285,14 @@ lokapay fund --amount 5    --unit USD --via stripe              # → Stripe che
 lokapay fund --amount 9.99 --unit USD --via paypal --open       # → PayPal approve_url, opens browser
 ```
 
+**Stripe test mode — quick card reference:**
+
+When the server is configured with a `sk_test_…` key, the Stripe
+Checkout page only accepts test cards. The default happy-path card is
+`4242 4242 4242 4242`; pair it with any future expiry and any 3-digit
+CVC. Other useful test cards (declines, 3DS, alternate networks) are
+documented in [`fiat-onramp.md`](./fiat-onramp.md#stripe-test-mode-—-quick-card-reference).
+
 ### `lokapay pay <bolt11>`
 
 Settle a BOLT11 invoice from the configured wallet.

@@ -99,8 +99,31 @@ lokapay fund --amount 5 --unit USD --via stripe --memo "agent budget" --open
 # Browser opens to the Stripe-hosted card form.
 ```
 
-Pay with the test card `4242 4242 4242 4242`, any future expiry, any
-CVC. Stripe POSTs the webhook back; check the wallet balance:
+#### Stripe test mode — quick card reference
+
+Pay with one of Stripe's [official test cards](https://docs.stripe.com/testing#cards).
+Quick reference for the common ones:
+
+| Card number | Network | Outcome | Notes |
+|---|---|---|---|
+| `4242 4242 4242 4242` | Visa | success | the default "happy path" |
+| `4000 0027 6000 3184` | Visa | success, requires 3DS | useful for SCA / authentication-flow testing |
+| `5555 5555 5555 4444` | Mastercard | success | when you need to check non-Visa branding |
+| `3782 822463 10005` | Amex | success | 15-digit number, 4-digit CVC |
+| `6011 1111 1111 1117` | Discover | success | |
+| `4000 0000 0000 0002` | Visa | declined (`generic_decline`) | exercise the failed-payment branch |
+| `4000 0000 0000 9995` | Visa | declined (`insufficient_funds`) | |
+| `4000 0000 0000 0069` | Visa | declined (`expired_card`) | |
+
+For **any** test card, the other fields can be whatever you want:
+
+- **Expiry**: any future date (e.g. `12 / 30`).
+- **CVC**: any 3 digits (`123`), or any 4 digits for Amex.
+- **ZIP / postal code**: any (`12345`, `SW1A 1AA`, …).
+- **Cardholder name / email**: any string. The email at checkout
+  becomes the customer email on the Stripe Charge object.
+
+After Stripe POSTs the webhook back, check the wallet balance:
 
 ```bash
 lokapay whoami
