@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -419,22 +420,90 @@ func promptHostedAccountMode() (string, error) {
 
 func promptRegisterDetails() (username, password, email string, err error) {
 	if err = survey.AskOne(&survey.Input{
-		Message: "Username:",
-	}, &username, survey.WithValidator(survey.Required)); err != nil {
+		Message: "Username (2-20 chars, letters/digits/./_; no leading/trailing . or _ and no .. or __):",
+	}, &username, survey.WithValidator(validateUsername)); err != nil {
 		return
 	}
 	if err = survey.AskOne(&survey.Password{
-		Message: "Password:",
-	}, &password, survey.WithValidator(survey.Required)); err != nil {
+		Message: "Password (at least 8 characters):",
+	}, &password, survey.WithValidator(validatePassword)); err != nil {
 		return
 	}
 	if err = survey.AskOne(&survey.Input{
 		Message: "Email (optional, press enter to skip):",
-	}, &email); err != nil {
+	}, &email, survey.WithValidator(validateOptionalEmail)); err != nil {
 		return
 	}
 	return
 }
+
+// validateUsername mirrors lnbits' is_valid_username regex
+// (^[a-zA-Z0-9._]{2,20}$ + no leading/trailing _ or ., no double __ or ..)
+// so the wizard rejects bad input locally instead of round-tripping a
+// 400 from the server.
+func validateUsername(ans interface{}) error {
+	s, ok := ans.(string)
+	if !ok {
+		return fmt.Errorf("expected string")
+	}
+	s = strings.TrimSpace(s)
+	if len(s) < 2 || len(s) > 20 {
+		return fmt.Errorf("must be 2-20 characters")
+	}
+	if !usernameAllowedChars.MatchString(s) {
+		return fmt.Errorf("only letters, digits, '.' and '_' allowed (no '-' or other punctuation)")
+	}
+	if strings.HasPrefix(s, ".") || strings.HasPrefix(s, "_") ||
+		strings.HasSuffix(s, ".") || strings.HasSuffix(s, "_") {
+		return fmt.Errorf("cannot start or end with '.' or '_'")
+	}
+	if strings.Contains(s, "..") || strings.Contains(s, "__") {
+		return fmt.Errorf("cannot contain '..' or '__'")
+	}
+	return nil
+}
+
+// validatePassword enforces lnbits' min-length rule (8 chars). The
+// server also accepts longer passwords with any characters; we don't
+// duplicate complexity rules beyond what the server checks.
+func validatePassword(ans interface{}) error {
+	s, ok := ans.(string)
+	if !ok {
+		return fmt.Errorf("expected string")
+	}
+	if len(s) < 8 {
+		return fmt.Errorf("must be at least 8 characters (got %d)", len(s))
+	}
+	return nil
+}
+
+// validateOptionalEmail accepts empty input (the field is optional)
+// and otherwise does a minimal sanity check — exactly one '@' with
+// non-empty local-part and domain-part. Server still has the final
+// say; this is just to catch obvious typos before a network round-trip.
+func validateOptionalEmail(ans interface{}) error {
+	s, ok := ans.(string)
+	if !ok {
+		return fmt.Errorf("expected string")
+	}
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	at := strings.IndexByte(s, '@')
+	if at < 1 || at == len(s)-1 || strings.IndexByte(s[at+1:], '@') >= 0 {
+		return fmt.Errorf("not a valid email (want user@host)")
+	}
+	if !strings.Contains(s[at+1:], ".") {
+		return fmt.Errorf("email host must contain '.'")
+	}
+	return nil
+}
+
+// usernameAllowedChars matches the character class lnbits permits:
+// letters, digits, dot, underscore. Anchored so the whole input must
+// be in the class — partial matches don't satisfy validateUsername.
+var usernameAllowedChars = regexp.MustCompile(`^[a-zA-Z0-9._]+$`)
 
 func promptLoginKeys() (adminKey, invoiceKey, walletAlias, walletID, userID string, err error) {
 	if err = survey.AskOne(&survey.Input{

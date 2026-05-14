@@ -286,6 +286,9 @@ func registerNamedHosted(c *cli.Context, cfg *Config) error {
 	}
 
 	username := c.String("username")
+	if err := validateUsername(username); err != nil {
+		return fail("register --username %q: %v", username, err)
+	}
 	password := c.String("password")
 	if password == "" {
 		fmt.Fprint(os.Stderr, "password: ")
@@ -295,8 +298,13 @@ func registerNamedHosted(c *cli.Context, cfg *Config) error {
 		}
 		fmt.Fprintln(os.Stderr)
 		password = string(b)
-		if password == "" {
-			return fail("register --username: password cannot be empty")
+	}
+	if err := validatePassword(password); err != nil {
+		return fail("register --password: %v", err)
+	}
+	if email := c.String("email"); email != "" {
+		if err := validateOptionalEmail(email); err != nil {
+			return fail("register --email %q: %v", email, err)
 		}
 	}
 
