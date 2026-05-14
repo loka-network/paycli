@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -389,12 +390,9 @@ func promptHostedEndpoint(current string) (string, bool, error) {
 		return "", false, err
 	}
 	endpoint = strings.TrimRight(strings.TrimSpace(endpoint), "/")
-	insecure := false
-	if strings.HasPrefix(endpoint, "http://") || strings.Contains(endpoint, "://127.0.0.1") || strings.Contains(endpoint, "://localhost") {
-		_ = survey.AskOne(&survey.Confirm{
-			Message: "Local / non-TLS endpoint — skip TLS verification?",
-			Default: true,
-		}, &insecure)
+	insecure := shouldSkipTLSFor(endpoint)
+	if insecure {
+		fmt.Fprintf(os.Stderr, "  (local / non-TLS endpoint — TLS verification will be skipped)\n")
 	}
 	return endpoint, insecure, nil
 }
@@ -597,7 +595,7 @@ func promptNodeEndpoint(curEndpoint, curTLS, curMac string) (endpoint, tlsCert, 
 		return
 	}
 	if err = survey.AskOne(&survey.Input{
-		Message: "Path to tls.cert (leave empty to use --insecure):",
+		Message: "Path to tls.cert (leave empty if the endpoint is local / self-signed):",
 		Default: curTLS,
 	}, &tlsCert); err != nil {
 		return
@@ -608,11 +606,13 @@ func promptNodeEndpoint(curEndpoint, curTLS, curMac string) (endpoint, tlsCert, 
 	}, &macaroon, survey.WithValidator(survey.Required)); err != nil {
 		return
 	}
-	if tlsCert == "" {
-		err = survey.AskOne(&survey.Confirm{
-			Message: "No TLS cert provided — skip TLS verification?",
-			Default: true,
-		}, &insecure)
+	// Auto-flip insecure when there's no cert AND the endpoint is local —
+	// 99% of the time that combo means "self-signed local lnd". Public
+	// remote endpoints without a cert keep insecure=false so the user
+	// gets a clear TLS error rather than silent MITM exposure.
+	if tlsCert == "" && shouldSkipTLSFor(endpoint) {
+		insecure = true
+		fmt.Fprintf(os.Stderr, "  (local endpoint with no cert — TLS verification will be skipped)\n")
 	}
 	return
 }
@@ -652,6 +652,55 @@ func defaultIfBlank(v, fallback string) string {
 		return fallback
 	}
 	return v
+}
+
+// shouldSkipTLSFor decides whether TLS verification should be skipped
+// for the given endpoint URL, based purely on the host. Used to drop a
+// redundant "skip TLS verification?" prompt during init — the answer
+// is auto-deterministic from the URL:
+//
+//   - http:// scheme               → true (no TLS to verify anyway)
+//   - https:// to a loopback or
+//     *.local mDNS host            → true (self-signed cert is the norm)
+//   - https:// to a public domain  → false (real cert expected)
+//
+// Caller is welcome to override via paycli's global --insecure flag if
+// they're in some weird middle case (e.g. a private VPN with no cert);
+// this helper just picks a sensible default so the wizard stops asking.
+func shouldSkipTLSFor(endpoint string) bool {
+	u, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil {
+		return false
+	}
+	if u.Scheme == "http" {
+		return true
+	}
+	host := u.Hostname()
+	switch host {
+	case "127.0.0.1", "localhost", "::1", "0.0.0.0":
+		return true
+	}
+	// Common dev / homelab patterns: foo.local (mDNS), foo.localhost
+	// (which RFC 6761 reserves as loopback). Treat both as local.
+	if strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+	// IPv4 private ranges 10.x.x.x and 192.168.x.x and 172.16-31.x.x —
+	// also typical for in-LAN lnd/agents-pay-service deployments where
+	// a real cert is rare.
+	if strings.HasPrefix(host, "10.") || strings.HasPrefix(host, "192.168.") {
+		return true
+	}
+	if strings.HasPrefix(host, "172.") {
+		// 172.16.0.0/12 → second octet 16-31
+		if dot := strings.IndexByte(host[4:], '.'); dot > 0 {
+			second := host[4 : 4+dot]
+			if n, err := strconv.Atoi(second); err == nil && n >= 16 && n <= 31 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // validateURL is a survey validator that accepts http(s)://host[:port][/path].
