@@ -7,8 +7,8 @@ one-liner CLI works against two custody models:
 
 | Route | Wallet location | Backend | When to pick it |
 |---|---|---|---|
-| **hosted** (default) | Loka custodial server | `agents-pay-service` REST + `X-Api-Key` — defaults to `https://agents-pay.loka.cash` | "I just want to pay things; don't make me run a node." |
-| **node** | Your own machine | `lnd-sui` / `lnd-btc` REST gateway + macaroon — `lokapay node` can install + run a loka-lnd for you | "I want self-custody and direct Lightning channels." |
+| **node** _(recommended)_ | Your own machine | `lnd-sui` / `lnd-btc` REST gateway + macaroon — `lokapay node` can install + run a loka-lnd for you | "I want self-custody and direct Lightning channels." |
+| **hosted** | Loka custodial server | `agents-pay-service` REST + `X-Api-Key` — `https://agents-pay.loka.cash` | "I just want to pay things; don't make me run a node." |
 
 You pick the route once during `lokapay init`; every subsequent
 `request` / `fund` / `pay` command dispatches transparently — the
