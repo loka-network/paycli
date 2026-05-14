@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -167,20 +166,27 @@ func cmdRequest() *cli.Command {
 	}
 }
 
-// debugTracer is an http.RoundTripper that pretty-prints every L402
-// step to its writer. Plugs in front of any existing Transport so the
-// L402Doer's HTTP behavior is unchanged — only the side effect of
-// each round-trip is observed.
+// debugTracer is an http.RoundTripper that narrates an L402 transaction
+// as a 3-step story for non-technical users:
 //
-// Output format is curl-style "→ request / ← response" pairs grouped
-// by attempt number, with a separate "$ paid" line between the 402
-// and the retry. Long opaque values (macaroon, preimage, bolt11) are
-// truncated to a fixed-width prefix so the log stays readable.
+//	①  Ask the merchant for the resource
+//	②  Pay the merchant's invoice (only when ① returned 402)
+//	③  Show the receipt back to the merchant
+//
+// Protocol-level detail (macaroon bytes, full bolt11, content-type,
+// content-length, exact authorization header) is hidden — those exist
+// in the lnd / lnbits logs for true debugging. The trace shown here
+// is meant to make the *flow* legible, not to be a wire dump.
+//
+// Plugs in front of any existing Transport so the L402Doer's HTTP
+// behavior is unchanged — only the side effect of each round-trip is
+// observed.
 type debugTracer struct {
 	base        http.RoundTripper
 	w           io.Writer
 	mu          sync.Mutex
-	attempt     int
+	httpStep    int       // counts HTTP round-trips
+	startTime   time.Time // first request fired; used for total-elapsed
 	lastReqTime time.Time
 
 	route       string // "hosted" / "node" — used in the wallet annotation
@@ -189,26 +195,47 @@ type debugTracer struct {
 
 func (t *debugTracer) RoundTrip(req *http.Request) (*http.Response, error) {
 	t.mu.Lock()
-	t.attempt++
-	attempt := t.attempt
+	t.httpStep++
+	step := t.httpStep
 	t.lastReqTime = time.Now()
+	if t.startTime.IsZero() {
+		t.startTime = t.lastReqTime
+	}
 	t.mu.Unlock()
 
-	t.printRequest(attempt, req)
+	// Header for this step. First HTTP call is ①, any subsequent call is ③
+	// (③ may repeat if --max-retries > 1 and the merchant rotates challenges,
+	// in which case each retry gets its own ③ stanza).
+	if step == 1 {
+		fmt.Fprintln(t.w, "  ① Asking the merchant for the resource …")
+	} else {
+		fmt.Fprintln(t.w, "  ③ Showing the receipt back to the merchant …")
+	}
+
 	resp, err := t.base.RoundTrip(req)
+	elapsed := time.Since(t.lastReqTime).Round(time.Millisecond)
 	if err != nil {
-		fmt.Fprintf(t.w, "\n  ← network error after %s: %v\n", time.Since(t.lastReqTime).Round(time.Millisecond), err)
+		fmt.Fprintf(t.w, "     ✗ network error after %s: %v\n\n", elapsed, err)
 		return nil, err
 	}
-	t.printResponse(attempt, resp, time.Since(t.lastReqTime))
+
+	switch {
+	case resp.StatusCode == http.StatusPaymentRequired:
+		fmt.Fprintf(t.w, "     ← merchant wants payment (402 Payment Required)  · %s\n\n", elapsed)
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		fmt.Fprintf(t.w, "     ✓ unlocked: HTTP %s  · %s\n\n", resp.Status, elapsed)
+	case resp.StatusCode >= 400:
+		fmt.Fprintf(t.w, "     ✗ HTTP %s  · %s\n\n", resp.Status, elapsed)
+	default:
+		fmt.Fprintf(t.w, "     ← HTTP %s  · %s\n\n", resp.Status, elapsed)
+	}
 	return resp, nil
 }
 
 func (t *debugTracer) banner(targetURL string) {
-	fmt.Fprintf(t.w, "── L402 debug trace ─────────────────────────────────────────────\n")
-	fmt.Fprintf(t.w, "  target:  %s\n", targetURL)
-	fmt.Fprintf(t.w, "  wallet:  %s\n", t.walletDesc())
-	fmt.Fprintln(t.w)
+	fmt.Fprintln(t.w, "─── L402 payment ──────────────────────────────────────────────")
+	fmt.Fprintf(t.w, "  Resource: %s\n", targetURL)
+	fmt.Fprintf(t.w, "  Wallet:   %s\n\n", t.walletDesc())
 }
 
 func (t *debugTracer) walletDesc() string {
@@ -218,117 +245,66 @@ func (t *debugTracer) walletDesc() string {
 	return t.route + " route"
 }
 
-func (t *debugTracer) printRequest(attempt int, req *http.Request) {
-	host := req.Host
-	if host == "" {
-		host = req.URL.Host
-	}
-	fmt.Fprintf(t.w, "[%d] → %s %s\n", attempt, req.Method, req.URL.String())
-	fmt.Fprintf(t.w, "      Host: %s\n", host)
-	if auth := req.Header.Get("Authorization"); auth != "" {
-		fmt.Fprintf(t.w, "      Authorization: %s\n", truncateLSAT(auth))
-	}
-	if ct := req.Header.Get("Content-Type"); ct != "" {
-		fmt.Fprintf(t.w, "      Content-Type: %s\n", ct)
-	}
-	if req.ContentLength > 0 {
-		fmt.Fprintf(t.w, "      Body: %d bytes\n", req.ContentLength)
-	}
-}
-
-func (t *debugTracer) printResponse(attempt int, resp *http.Response, elapsed time.Duration) {
-	fmt.Fprintf(t.w, "[%d] ← HTTP %s  (%s)\n", attempt, resp.Status, elapsed.Round(time.Millisecond))
-	// Pull the L402-relevant headers so a 402 is self-explanatory in the log.
-	if wa := resp.Header.Get("Www-Authenticate"); wa != "" {
-		fmt.Fprintf(t.w, "      WWW-Authenticate: %s\n", truncateChallenge(wa))
-	}
-	if ct := resp.Header.Get("Content-Type"); ct != "" {
-		fmt.Fprintf(t.w, "      Content-Type: %s\n", ct)
-	}
-	if cl := resp.Header.Get("Content-Length"); cl != "" {
-		fmt.Fprintf(t.w, "      Content-Length: %s\n", cl)
-	}
-	fmt.Fprintln(t.w)
-}
-
 // paid is called by L402Doer.OnPaid after a successful invoice settle.
-// Sits between the 402 response and the LSAT-bearing retry, so we
-// place it visually under the prior step.
+// Sits between the 402 response and the LSAT-bearing retry, so it
+// renders as step ② between ① and ③.
 func (t *debugTracer) paid(ch *sdk.Challenge, paid *sdk.Payment) {
-	fmt.Fprintf(t.w, "  $ paying invoice via %s\n", t.walletDesc())
-	fmt.Fprintf(t.w, "      invoice:      %s\n", truncate(ch.Invoice, 48))
-	fmt.Fprintf(t.w, "      macaroon:     %s\n", truncate(ch.Macaroon, 48))
-	fmt.Fprintf(t.w, "      payment_hash: %s\n", paid.PaymentHash)
-	if paid.Preimage != "" {
-		fmt.Fprintf(t.w, "      preimage:     %s ✓ revealed\n", paid.Preimage)
-	}
-	if paid.Status != "" {
-		fmt.Fprintf(t.w, "      status:       %s\n", paid.Status)
-	}
-	if paid.Fee != 0 {
-		fmt.Fprintf(t.w, "      fee:          %d msat\n", paid.Fee)
-	}
+	chain := chainFromExtra(paid.Extra)
+	fmt.Fprintln(t.w, "  ② Paying the merchant's invoice via your wallet …")
 	if paid.Amount != 0 {
-		fmt.Fprintf(t.w, "      amount:       %d msat\n", paid.Amount)
+		amt := formatFriendlyAmount(paid.Amount, chain)
+		if paid.Fee != 0 {
+			fee := formatFriendlyAmount(paid.Fee, chain)
+			fmt.Fprintf(t.w, "     ✓ paid %s  (fee %s)\n", amt, fee)
+		} else {
+			fmt.Fprintf(t.w, "     ✓ paid %s\n", amt)
+		}
+	} else {
+		fmt.Fprintln(t.w, "     ✓ payment settled")
+	}
+	if paid.Preimage != "" {
+		fmt.Fprintf(t.w, "     ✓ receipt: %s…  (proof you can show the merchant)\n", truncate(paid.Preimage, 16))
 	}
 	fmt.Fprintln(t.w)
+	// Silence the unused param warning — keep the signature stable so the
+	// SDK's OnPaid hook still aligns; we don't need ch here.
+	_ = ch
 }
 
 func (t *debugTracer) summary(ok bool, finalErr error) {
-	fmt.Fprintln(t.w, "─────────────────────────────────────────────────────────────────")
+	total := time.Since(t.startTime).Round(time.Millisecond)
+	fmt.Fprintln(t.w, "──────────────────────────────────────────────────────────────")
 	if ok {
-		fmt.Fprintf(t.w, "  ✓ L402 cycle complete — %d HTTP round-trip(s)\n", t.attempt)
+		fmt.Fprintf(t.w, "  ✓ done in %s — %d HTTP round-trip(s)\n\n", total, t.httpStep)
 	} else {
-		fmt.Fprintf(t.w, "  ✗ failed after %d HTTP round-trip(s): %v\n", t.attempt, finalErr)
+		fmt.Fprintf(t.w, "  ✗ failed after %s: %v\n\n", total, finalErr)
 	}
-	fmt.Fprintln(t.w)
 }
 
-// truncateLSAT collapses `LSAT <macaroonB64>:<preimageHex>` into a
-// prefix+suffix view so the auth header is one line.
-func truncateLSAT(auth string) string {
-	if !strings.HasPrefix(auth, "LSAT ") {
-		return auth
+// formatFriendlyAmount renders a wallet-reported msat amount in the
+// chain's natural unit (SUI / BTC), falling back to the sub-unit
+// (MIST / sat) for amounts smaller than 0.0001 of the whole-unit. Sign
+// is dropped — `paid.Amount` is negative for outgoing on the hosted
+// route; for user-facing display the magnitude is what matters.
+func formatFriendlyAmount(msat int64, chain chainUnits) string {
+	abs := msat
+	if abs < 0 {
+		abs = -abs
 	}
-	rest := strings.TrimPrefix(auth, "LSAT ")
-	colon := strings.LastIndex(rest, ":")
-	if colon == -1 {
-		return "LSAT " + truncate(rest, 48)
+	subUnits := float64(abs) / 1000.0
+	whole := subUnits / chain.subPerWhole
+	if whole >= 0.0001 {
+		// Trim trailing zeros so "0.010000 SUI" → "0.01 SUI".
+		s := strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.6f", whole), "0"), ".")
+		return s + " " + chain.unit
 	}
-	mac := rest[:colon]
-	preimage := rest[colon+1:]
-	return "LSAT " + truncate(mac, 24) + ":" + preimage
-}
-
-// truncateChallenge keeps the scheme + macaroon/invoice tags but
-// shortens each opaque value. Input is the full WWW-Authenticate
-// value (`LSAT macaroon="…", invoice="lnbcrt…"`).
-func truncateChallenge(s string) string {
-	// Buffer up the output piece by piece. We scan for `key="value"`
-	// pairs and only truncate the value if it's longer than the limit.
-	var out bytes.Buffer
-	i := 0
-	for i < len(s) {
-		eq := strings.IndexByte(s[i:], '=')
-		if eq == -1 {
-			out.WriteString(s[i:])
-			break
-		}
-		out.WriteString(s[i : i+eq+1]) // include the '='
-		i += eq + 1
-		if i < len(s) && s[i] == '"' {
-			end := strings.IndexByte(s[i+1:], '"')
-			if end == -1 {
-				out.WriteString(s[i:])
-				break
-			}
-			out.WriteByte('"')
-			out.WriteString(truncate(s[i+1:i+1+end], 32))
-			out.WriteByte('"')
-			i += end + 2
-		}
+	// Sub-unit precision (3 decimals lets fees like 11 msat show as
+	// "0.011 MIST" rather than "0 MIST").
+	s := strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.3f", subUnits), "0"), ".")
+	if s == "" {
+		s = "0"
 	}
-	return out.String()
+	return s + " " + chain.subunit
 }
 
 // `truncate(s, n)` is defined in cmd_events.go and reused here.
