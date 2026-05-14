@@ -58,8 +58,17 @@ const (
 // shim in loadConfig folds legacy flat / pre-multiwallet fields into the
 // new shape. Subsequent saveConfig rewrites in the canonical layout.
 type Config struct {
-	Route    Route        `json:"route,omitempty"`
-	Insecure bool         `json:"insecure_tls,omitempty"`
+	Route    Route `json:"route,omitempty"`
+	Insecure bool  `json:"insecure_tls,omitempty"`
+
+	// PrismURL is the L402 gateway lokapay's `services` command (and any
+	// future Prism-catalog operations) targets by default. Set by the
+	// init wizard to match the agents-pay-service / lnd endpoint locality
+	// (local endpoint → local prism, public endpoint → prism.loka.cash);
+	// the user can override at any time via `lokapay config set prism_url
+	// …` or per-call with `--prism-url`. Empty means "fall back to
+	// sdk.DefaultPrismURL".
+	PrismURL string `json:"prism_url,omitempty"`
 
 	Hosted HostedConfig `json:"hosted,omitempty"`
 	Node   NodeConfig   `json:"node,omitempty"`

@@ -100,6 +100,7 @@ func wizardHosted(ctx context.Context, cfg *Config) error {
 	}
 	cfg.Hosted.BaseURL = baseURL
 	cfg.Insecure = insecure
+	setPrismURLFromEndpoint(cfg, baseURL)
 
 	mode, err := promptHostedAccountMode()
 	if err != nil {
@@ -268,6 +269,7 @@ func wizardNodeGuided(ctx context.Context, cfg *Config) error {
 	cfg.Node.Network = string(network)
 	cfg.Node.PackageID = pkgID
 	cfg.Insecure = true
+	setPrismURLFromEndpoint(cfg, cfg.Node.Endpoint)
 	if err := saveConfig(cfg); err != nil {
 		return fail("save config: %v", err)
 	}
@@ -302,6 +304,7 @@ func wizardNodeManual(ctx context.Context, cfg *Config) error {
 	if insecure {
 		cfg.Insecure = true
 	}
+	setPrismURLFromEndpoint(cfg, endpoint)
 	if err := saveConfig(cfg); err != nil {
 		return fail("save config: %v", err)
 	}
@@ -652,6 +655,42 @@ func defaultIfBlank(v, fallback string) string {
 		return fallback
 	}
 	return v
+}
+
+// deriveDefaultPrismURL picks a Prism gateway URL that pairs with the
+// wallet endpoint the user just chose. Skips the "and which Prism are
+// you on?" prompt — the answer is unambiguous from locality:
+//
+//   - wallet endpoint is local (127.0.0.1 / localhost / RFC 1918 / .local)
+//     → assume a local Prism on https://127.0.0.1:8080
+//   - wallet endpoint is anywhere else (incl. agents-pay.loka.cash)
+//     → use sdk.DefaultPrismURL (https://prism.loka.cash)
+//
+// User can always override with `lokapay config set prism_url …` or
+// per-call `--prism-url`; this is just the init wizard's default pick.
+func deriveDefaultPrismURL(walletEndpoint string) string {
+	if shouldSkipTLSFor(walletEndpoint) {
+		return "https://127.0.0.1:8080"
+	}
+	return sdk.DefaultPrismURL
+}
+
+// setPrismURLFromEndpoint writes the auto-derived prism URL into cfg
+// and prints a one-line stderr note so the user sees what was chosen.
+// Idempotent — re-running with the same endpoint produces the same
+// value. Skipped silently if the user has already pinned a value via
+// `lokapay config set prism_url …` (we don't overwrite an explicit
+// pick), unless the new derived value matches the current value.
+func setPrismURLFromEndpoint(cfg *Config, walletEndpoint string) {
+	derived := deriveDefaultPrismURL(walletEndpoint)
+	// First-time set, or user is re-running init: write the derived
+	// value. If they had a custom prism_url, leave it alone.
+	if cfg.PrismURL == "" || cfg.PrismURL == sdk.DefaultPrismURL || cfg.PrismURL == "https://127.0.0.1:8080" {
+		cfg.PrismURL = derived
+		fmt.Fprintf(os.Stderr, "  (prism gateway → %s)\n", derived)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "  (prism gateway stays at saved value: %s — change via `lokapay config set prism_url …`)\n", cfg.PrismURL)
 }
 
 // shouldSkipTLSFor decides whether TLS verification should be skipped

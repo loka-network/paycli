@@ -52,6 +52,11 @@ var configFields = map[string]configField{
 		},
 		help: "skip TLS verification on the wallet endpoint (true|false)",
 	},
+	"prism_url": {
+		get:  func(c *Config) string { return c.PrismURL },
+		set:  func(c *Config, v string) error { c.PrismURL = v; return nil },
+		help: "default Prism gateway URL used by `lokapay services` (auto-set by init from the wallet endpoint locality; falls back to https://prism.loka.cash)",
+	},
 
 	// Hosted route -------------------------------------------------------
 	// Account-level fields (one per config) live as plain dotted keys.
@@ -150,7 +155,7 @@ var configFields = map[string]configField{
 // `config keys`. Group hosted-then-node so the listing matches the JSON
 // layout the user sees on disk.
 var configKeyOrder = []string{
-	"route", "insecure_tls",
+	"route", "insecure_tls", "prism_url",
 	"hosted.base_url", "hosted.username", "hosted.user_id",
 	"hosted.admin_bearer_token", "hosted.active_wallet",
 	"hosted.active.wallet_id", "hosted.active.admin_key", "hosted.active.invoice_key",
