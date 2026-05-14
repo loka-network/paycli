@@ -82,28 +82,34 @@ changelog:
     - title: "Other"
       order: 999
 
-brews:
-  - name: lokapay
-    repository:
-      owner: loka-network
-      name: homebrew-tap
-      branch: main
-      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    # The brews step is skipped when HOMEBREW_TAP_TOKEN is unset — see
-    # `skip_upload: auto` below — so a release won't fail just because
-    # the tap repo isn't set up yet.
-    skip_upload: auto
-    directory: Formula
-    homepage: "https://github.com/loka-network/paycli"
-    description: "Loka Payment CLI + Go SDK — pay L402 APIs over Lightning on Sui"
-    license: "MIT"
-    install: |
-      bin.install "lokapay"
-    test: |
-      system "#{bin}/lokapay", "--version"
-    commit_author:
-      name: ai-chen2050
-      email: 1033467071@qq.com
+# Homebrew formula publishing — disabled at the config level until the
+# tap repo exists. Goreleaser v2's `brews` block has no `disable` field
+# and `skip_upload: auto` only skips prerelease uploads (the step still
+# queries the tap repo's default branch up-front, 401s without a token,
+# and fails the whole release). Cleanest fix: keep the config as an
+# inline template so it's pasted back when ready.
+#
+# When `loka-network/homebrew-tap` is created and a HOMEBREW_TAP_TOKEN
+# secret is set on this repo, uncomment the block below.
+#
+# brews:
+#   - name: lokapay
+#     repository:
+#       owner: loka-network
+#       name: homebrew-tap
+#       branch: main
+#       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+#     directory: Formula
+#     homepage: "https://github.com/loka-network/paycli"
+#     description: "Loka Payment CLI + Go SDK — pay L402 APIs over Lightning"
+#     license: "MIT"
+#     install: |
+#       bin.install "lokapay"
+#     test: |
+#       system "#{bin}/lokapay", "--version"
+#     commit_author:
+#       name: ai-chen2050
+#       email: 1033467071@qq.com
 
 release:
   github:
