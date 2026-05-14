@@ -497,7 +497,7 @@ The new wallet's keys are auto-saved into `hosted.wallets[<alias>]`.
 `wallets show` masks keys by default; pass `--reveal` to print plaintext
 when you need to copy them into an agent's environment.
 
-### `lokapay request <url> [--method GET] [-H 'Key: Value'] [-d body] [-i] [--insecure-target] [--max-retries 1]`
+### `lokapay request <url> [--method GET] [-H 'Key: Value'] [-d body] [-i] [--insecure-target] [--max-retries 1] [--debug]`
 
 HTTP request with automatic L402 (HTTP 402) payment handling.
 
@@ -531,6 +531,54 @@ Notes:
   re-use the same `L402Doer` get free token reuse.
 * `--insecure-target` disables TLS verification on the **target** URL only.
   `--insecure` (global) disables TLS verification on the **wallet** URL.
+
+#### `--debug`: visualize the L402 exchange
+
+`--debug` instruments the doer so every step of the L402 conversation
+prints to **stderr** (response body keeps going to stdout — pipes stay
+clean). Useful while learning the protocol or troubleshooting a stuck
+payment.
+
+```
+$ lokapay request --debug -H "Host: service1.com" --insecure-target \
+      https://127.0.0.1:8080/freebieservice
+── L402 debug trace ─────────────────────────────────────────────
+  target:  https://127.0.0.1:8080/freebieservice
+  wallet:  hosted route (sub-wallet "default")
+
+[1] → GET https://127.0.0.1:8080/freebieservice
+      Host: service1.com
+[1] ← HTTP 402 Payment Required  (38ms)
+      WWW-Authenticate: LSAT macaroon="AgEEbHNhdAJCAACptfkyc1B…", invoice="lnbcrt100m1p5l6n33pp54x6ljvnn2py0…"
+      Content-Type: text/plain; charset=utf-8
+
+  $ paying invoice via hosted route (sub-wallet "default")
+      invoice:      lnbcrt100m1p5l6n33pp54x6ljvnn2py0…
+      macaroon:     AgEEbHNhdAJCAACptfkyc1BI8CJRzhuDO5T…
+      payment_hash: 54x6ljvnn2py0qgj3ecdcxwu57vp54c0dy7ekfwpe04sdmxks9ju
+      preimage:     dbba4231c7c87818f05c23f0ecd799f4… ✓ revealed
+      status:       success
+      amount:       100000000 msat
+
+[2] → GET https://127.0.0.1:8080/freebieservice
+      Host: service1.com
+      Authorization: LSAT AgEEbHNhdAJCAACptfkyc1B…:dbba4231c7c87818f05c23f0ecd799f44739b4e5b455be6a45fe25a0b04b3b2b
+[2] ← HTTP 200 OK  (52ms)
+      Content-Type: application/json
+      Content-Length: 235
+
+─────────────────────────────────────────────────────────────────
+  ✓ L402 cycle complete — 2 HTTP round-trip(s)
+
+{"status":"paid","message":"…"}
+```
+
+What you're looking at: step [1] sends the unauthenticated request,
+the server replies with 402 + a fresh challenge. The `$ paying`
+block is the wallet round-trip — for hosted it's a POST to
+`agents-pay-service`, for node it's the lnd REST `payinvoice`. Once
+the preimage comes back, step [2] is the same request with the LSAT
+auth header, and the merchant returns 200.
 
 ## Exit codes
 
