@@ -14,7 +14,7 @@ var version = "dev"
 func main() {
 	app := &cli.App{
 		Name:    "lokapay",
-		Usage:   "Loka Payment CLI — custodial wallet + L402 payments for AI agents",
+		Usage:   "Loka Payment CLI — self-custody or hosted L402 payments for AI agents",
 		Version: version,
 		Flags: []cli.Flag{
 			&cli.StringFlag{
