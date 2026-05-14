@@ -169,9 +169,15 @@ func cmdRequest() *cli.Command {
 // debugTracer is an http.RoundTripper that narrates an L402 transaction
 // as a 3-step story for non-technical users:
 //
-//	①  Ask the merchant for the resource
-//	②  Pay the merchant's invoice (only when ① returned 402)
-//	③  Show the receipt back to the merchant
+//	1. Ask the merchant for the resource
+//	2. Pay the merchant's invoice (only when step 1 returned 402)
+//	3. Show the receipt back to the merchant
+//
+// Step markers stay ASCII (`1.` / `2.` / `3.`) instead of the
+// circled-digit Unicode glyphs (①②③, U+2460..) because those are
+// East-Asian-Width "Ambiguous" — some terminals render them at width
+// 2, others at width 1, which mis-aligns everything that follows.
+// ASCII numbers + a trailing period render identically everywhere.
 //
 // Protocol-level detail (macaroon bytes, full bolt11, content-type,
 // content-length, exact authorization header) is hidden — those exist
@@ -203,13 +209,13 @@ func (t *debugTracer) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	t.mu.Unlock()
 
-	// Header for this step. First HTTP call is ①, any subsequent call is ③
-	// (③ may repeat if --max-retries > 1 and the merchant rotates challenges,
-	// in which case each retry gets its own ③ stanza).
+	// Header for this step. First HTTP call is step 1, any subsequent
+	// call is step 3 (3 may repeat if --max-retries > 1 and the merchant
+	// rotates challenges; each retry gets its own "3." stanza).
 	if step == 1 {
-		fmt.Fprintln(t.w, "  ① Asking the merchant for the resource …")
+		fmt.Fprintln(t.w, "  1. Asking the merchant for the resource …")
 	} else {
-		fmt.Fprintln(t.w, "  ③ Showing the receipt back to the merchant …")
+		fmt.Fprintln(t.w, "  3. Showing the receipt back to the merchant …")
 	}
 
 	resp, err := t.base.RoundTrip(req)
@@ -247,10 +253,10 @@ func (t *debugTracer) walletDesc() string {
 
 // paid is called by L402Doer.OnPaid after a successful invoice settle.
 // Sits between the 402 response and the LSAT-bearing retry, so it
-// renders as step ② between ① and ③.
+// renders as step 2 between step 1 and step 3.
 func (t *debugTracer) paid(ch *sdk.Challenge, paid *sdk.Payment) {
 	chain := chainFromExtra(paid.Extra)
-	fmt.Fprintln(t.w, "  ② Paying the merchant's invoice via your wallet …")
+	fmt.Fprintln(t.w, "  2. Paying the merchant's invoice via your wallet …")
 	if paid.Amount != 0 {
 		amt := formatFriendlyAmount(paid.Amount, chain)
 		if paid.Fee != 0 {
