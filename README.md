@@ -31,8 +31,10 @@ L402Doer takes a `Wallet` interface and both backends satisfy it.
 # curl (recommended — works on macOS / Linux)
 curl -fsSL https://github.com/loka-network/paycli/releases/latest/download/install.sh | sh
 
-# Homebrew
-brew install loka-network/tap/lokapay
+# Homebrew — coming soon (tap repo + PAT not yet provisioned;
+# the goreleaser pipeline is already wired so this lights up
+# as soon as loka-network/homebrew-tap is published).
+# brew install loka-network/tap/lokapay
 
 # Go (installs from main; requires Go 1.25+)
 go install github.com/loka-network/paycli/cmd/lokapay@latest
