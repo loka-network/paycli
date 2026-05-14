@@ -43,10 +43,30 @@ go install github.com/loka-network/paycli/cmd/lokapay@latest
 ## Quick start
 
 ```bash
-lokapay init                                   # one-shot interactive setup
-lokapay services                               # browse Prism's service catalog
-lokapay node faucet                            # (devnet/testnet only) top up test SUI
-lokapay request -i https://merchant/foo        # pays the 402 challenge, returns the response
+lokapay init                                       # one-shot interactive setup
+lokapay services                                   # browse Prism's service catalog
+lokapay node faucet                                # (devnet/testnet only) top up test SUI
+lokapay request -i --debug <merchant-url>          # pays the 402 challenge, returns the response
+```
+
+The `<merchant-url>` is whatever URL the L402 service publishes — Prism
+routes by **Host header** (matched against each service's
+`host_regexp` in the catalog), not by URL path. In a production
+deployment a merchant typically owns a real domain that DNS-resolves
+to the gateway, so you just point `lokapay request` at it:
+
+```bash
+lokapay request -i https://api.some-merchant.com/v1/data
+```
+
+For local dev where everything lives on `127.0.0.1`, override the
+Host header explicitly to match whichever service's `host_regexp` you
+want (`lokapay services` shows them all):
+
+```bash
+# Catalog says service1 has host_regexp=^service1.com$ — fake the Host header.
+lokapay request -H "Host: service1.com" --insecure-target -i --debug \
+    https://127.0.0.1:8080/data.json
 ```
 
 `init` handles all the boring stuff in a single wizard: hosted vs
