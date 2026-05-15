@@ -75,11 +75,13 @@ func cmdRequest() *cli.Command {
 
 			var tracer *debugTracer
 			if c.Bool("debug") {
+				route := string(cfg.EffectiveRoute())
 				tracer = &debugTracer{
 					base:        baseTransport,
 					w:           os.Stderr,
-					route:       string(cfg.EffectiveRoute()),
+					route:       route,
 					walletAlias: walletAlias,
+					layout:      laneLayoutFor(route),
 				}
 				baseTransport = tracer
 				tracer.banner(c.Args().First())
@@ -167,28 +169,44 @@ func cmdRequest() *cli.Command {
 }
 
 // debugTracer is an http.RoundTripper that renders an L402 transaction
-// as a UML-style sequence diagram — three vertical lanes (you, the
-// merchant, your wallet), arrows between them showing each message,
-// time flowing top to bottom.
+// as a UML-style sequence diagram — three or four vertical lanes
+// (you, prism, merchant, and on hosted route, wallet), arrows between
+// them showing each message, time flowing top to bottom.
 //
-//	          you           merchant         wallet
-//	           │              │                │
-//	   1.      │── GET ──────►│                │      93ms
-//	           │◄── 402 ──────│                │
-//	           │              │                │
-//	   2.      │── pay ─────────────────────── ►│
-//	           │◄── preimage ─────────────────  │      0.01 SUI
-//	           │              │                │
-//	   3.      │── GET + LSAT ►                 │      52ms
-//	           │◄── 200 OK ───│                 │
-//	           │              │                │
+// Lane set depends on custody route:
 //
-// Lane positions are fixed (laneCol[0..2]) so every arrow draws into
-// the same columns regardless of label length. Drawing primitives
-// keep the renderer ASCII-only for terminal portability — box drawing
-// chars (─ │ ◄ ►) are narrow Unicode (width 1) and consistent across
-// mainstream shells; we avoid East-Asian-Ambiguous glyphs like ① that
-// rendered at width-2 in some setups.
+// hosted (4 lanes — wallet is the remote agents-pay-service sub-wallet):
+//
+//	         you         prism        merchant       wallet
+//	          │            │             │             │
+//	  1.      │── GET ────►│             │             │
+//	          │            │─ ─ proxy ─ ►│             │
+//	          │            │◄ ─ ─ 402 ─ ─│             │
+//	          │◄── 402 ────│             │             │   needs payment · 89ms
+//	  2.      │── pay invoice ────────────────────────►│
+//	          │◄── preimage ───────────────────────────│   0.01 SUI
+//	  3.      │─ GET+LSAT ►│             │             │
+//	          │            │─ ─ proxy ─ ►│             │
+//	          │◄── 200 ────│             │             │   52ms
+//
+// node (3 lanes — "you" IS the wallet, lnd is local; pay step is a
+// self-loop annotation instead of a cross-lane arrow):
+//
+//	      you (lnd)       prism        merchant
+//	          │            │             │
+//	  1.      │── GET ────►│             │
+//	          │            │─ ─ proxy ─ ►│
+//	          │◄── 402 ────│             │            needs payment · 89ms
+//	  2.      │  ↻ paid via local lnd · 0.01 SUI
+//	  3.      │─ GET+LSAT ►│             │
+//	          │            │─ ─ proxy ─ ►│
+//	          │◄── 200 ────│             │            52ms
+//
+// Drawing primitives stay narrow-width Unicode only (─ │ ◄ ►). The
+// prism↔merchant "forward" hops use the same glyphs but with single-
+// space gaps so they read as dashed — paycli never observes them
+// directly, they're a structural hint that prism proxies HTTP to the
+// L402-protected merchant backend.
 //
 // Plugs in front of any existing Transport so the L402Doer's HTTP
 // behavior is unchanged — only the side effect of each round-trip is
@@ -203,29 +221,54 @@ type debugTracer struct {
 
 	route       string // "hosted" / "node" — used in the wallet annotation
 	walletAlias string // sub-wallet alias on hosted route; empty on node
+	layout      laneLayout
 }
 
-// Lane column positions (0-indexed). Chosen so:
-//   - step label "   N.   " fits in cols 0..7
-//   - inter-lane gaps are ~18 chars — wide enough for short labels
-//     ("GET", "402", "200 OK", "GET+LSAT") to sit centered between
-//     the bars without crowding
-//   - lineWidth leaves a 4-char halo past the wallet lane so column
-//     headers ("wallet") can be centered without clipping
-//   - total fits comfortably in an 80-col terminal even with a
-//     side-note ("4.369s") appended
-const (
-	laneClient   = 12
-	laneMerchant = 30
-	laneWallet   = 48
-	lineWidth    = laneWallet + 4
-)
+// laneLayout fixes the column positions + header labels for one custody
+// route. Computed once at tracer construction so every arrow renders
+// into consistent columns regardless of label length. node mode drops
+// the wallet lane and shrinks the canvas accordingly so the diagram
+// stays comfortable in an 80-col terminal even with a side-note.
+type laneLayout struct {
+	client    int
+	prism     int
+	merchant  int
+	wallet    int // 0 when hasWallet is false
+	width     int
+	hasWallet bool
 
-// Friendly column header labels.
-var laneLabels = struct{ client, merchant, wallet string }{
-	client:   "you",
-	merchant: "merchant",
-	wallet:   "wallet",
+	labels struct {
+		client, prism, merchant, wallet string
+	}
+}
+
+func laneLayoutFor(route string) laneLayout {
+	if route == "node" {
+		l := laneLayout{
+			client:   9,
+			prism:    25,
+			merchant: 41,
+			width:    47,
+		}
+		l.labels.client = "you (lnd)"
+		l.labels.prism = "prism"
+		l.labels.merchant = "merchant"
+		return l
+	}
+	// hosted (default): four lanes with the remote wallet at the far right.
+	l := laneLayout{
+		client:    9,
+		prism:     25,
+		merchant:  41,
+		wallet:    57,
+		width:     62,
+		hasWallet: true,
+	}
+	l.labels.client = "you"
+	l.labels.prism = "prism"
+	l.labels.merchant = "merchant"
+	l.labels.wallet = "wallet"
+	return l
 }
 
 func (t *debugTracer) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -248,21 +291,23 @@ func (t *debugTracer) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp, err := t.base.RoundTrip(req)
 	elapsed := time.Since(t.lastReqTime).Round(time.Millisecond)
 
-	// Outgoing arrow: client → merchant
+	// Step 1/3 always show four arrows: you→prism (solid GET / GET+LSAT),
+	// prism→merchant (dotted "forward"), merchant→prism (dotted resp),
+	// prism→you (solid resp). paycli only observes the outer pair, but
+	// the dotted middle pair makes the gateway's proxy role explicit
+	// (per L402 — prism gates on macaroon+preimage and forwards on
+	// success).
 	outLabel := req.Method
 	if stepNum == 3 {
 		outLabel = req.Method + " + LSAT"
 	}
-	fmt.Fprintln(t.w, t.arrowRight(stepNum, laneClient, laneMerchant, outLabel, ""))
+	fmt.Fprintln(t.w, t.arrowRight(stepNum, t.layout.client, t.layout.prism, outLabel, ""))
 
-	// Incoming arrow: merchant → client (or error)
 	if err != nil {
-		fmt.Fprintln(t.w, t.arrowLeft(0, laneClient, laneMerchant, "✗ network error", elapsed.String()))
-		fmt.Fprintf(t.w, "%s%v\n\n", strings.Repeat(" ", laneWallet+5), err)
+		fmt.Fprintln(t.w, t.arrowLeft(0, t.layout.client, t.layout.prism, "✗ network error", elapsed.String()))
+		fmt.Fprintf(t.w, "%s%v\n\n", strings.Repeat(" ", t.layout.width+1), err)
 		return nil, err
 	}
-	// Keep labels short so they fit in the inter-lane gap; use the
-	// side-note column for the explanatory phrase.
 	var inLabel, inNote string
 	switch {
 	case resp.StatusCode == http.StatusPaymentRequired:
@@ -275,7 +320,12 @@ func (t *debugTracer) RoundTrip(req *http.Request) (*http.Response, error) {
 		inLabel = fmt.Sprintf("%d", resp.StatusCode)
 		inNote = http.StatusText(resp.StatusCode) + " · " + elapsed.String()
 	}
-	fmt.Fprintln(t.w, t.arrowLeft(0, laneClient, laneMerchant, inLabel, inNote))
+	// Dotted hops: prism ⇢ merchant ⇠ prism. paycli doesn't time these
+	// independently (they roll into elapsed on the outer return), so
+	// the side-note stays on the outer return arrow.
+	fmt.Fprintln(t.w, t.arrowRightDotted(t.layout.prism, t.layout.merchant, "forward"))
+	fmt.Fprintln(t.w, t.arrowLeftDotted(t.layout.prism, t.layout.merchant, inLabel))
+	fmt.Fprintln(t.w, t.arrowLeft(0, t.layout.client, t.layout.prism, inLabel, inNote))
 	fmt.Fprintln(t.w, t.laneBars())
 	return resp, nil
 }
@@ -290,28 +340,53 @@ func (t *debugTracer) banner(targetURL string) {
 }
 
 func (t *debugTracer) walletDesc() string {
-	if t.walletAlias != "" {
-		return fmt.Sprintf("%s route (sub-wallet %q)", t.route, t.walletAlias)
+	if t.route == "node" {
+		return "node route (local lnd — self-custody)"
 	}
-	return t.route + " route"
+	if t.walletAlias != "" {
+		return fmt.Sprintf("hosted route (sub-wallet %q on agents-pay-service)", t.walletAlias)
+	}
+	return "hosted route (agents-pay-service)"
 }
 
 // paid is called by L402Doer.OnPaid after a successful invoice settle.
-// Renders as step 2: client ↔ wallet round-trip.
+// Renders step 2 differently depending on custody:
+//
+//   - hosted: cross-lane arrow you ⇄ wallet ("pay invoice" / "preimage").
+//   - node:   self-loop annotation on the "you" lane, because the
+//     wallet is the same lnd that issued the request — there's no
+//     remote counterparty.
 func (t *debugTracer) paid(ch *sdk.Challenge, paid *sdk.Payment) {
 	chain := chainFromExtra(paid.Extra)
 	var amtNote string
 	if paid.Amount != 0 {
 		amtNote = formatFriendlyAmount(paid.Amount, chain)
 	}
-	fmt.Fprintln(t.w, t.arrowRight(2, laneClient, laneWallet, "pay invoice", ""))
 	receiptNote := ""
 	if paid.Preimage != "" {
-		// `truncate` already appends "…" when the value is clipped, so
-		// don't double it.
 		receiptNote = "receipt: " + truncate(paid.Preimage, 16)
 	}
-	fmt.Fprintln(t.w, t.arrowLeft(0, laneClient, laneWallet, "preimage", amtNote))
+
+	if !t.layout.hasWallet {
+		// node mode: render as a self-note on the "you" lane.
+		note := "↻ paid via local lnd"
+		if amtNote != "" {
+			note += " · " + amtNote
+		}
+		fmt.Fprintln(t.w, t.selfNote(2, t.layout.client, note))
+		if receiptNote != "" {
+			fmt.Fprintln(t.w, t.laneBarsWithNote(receiptNote))
+		}
+		fmt.Fprintln(t.w, t.laneBars())
+		_ = ch
+		return
+	}
+
+	// hosted mode: cross-lane arrow you ⇄ wallet (passes over prism +
+	// merchant lanes — visually crosses them, semantically bypasses
+	// them since the wallet settles independently of the gateway).
+	fmt.Fprintln(t.w, t.arrowRight(2, t.layout.client, t.layout.wallet, "pay invoice", ""))
+	fmt.Fprintln(t.w, t.arrowLeft(0, t.layout.client, t.layout.wallet, "preimage", amtNote))
 	if receiptNote != "" {
 		fmt.Fprintln(t.w, t.laneBarsWithNote(receiptNote))
 	}
@@ -332,33 +407,50 @@ func (t *debugTracer) summary(ok bool, finalErr error) {
 // ----------------------------------------------------------------
 // Diagram drawing primitives.
 
-// laneHeader produces the column header row.
+// laneHeader produces the column header row, e.g. for hosted:
 //
-//	"          you           merchant         wallet"
+//	"        you          prism         merchant       wallet"
 func (t *debugTracer) laneHeader() string {
-	buf := make([]rune, lineWidth)
-	for i := range buf {
-		buf[i] = ' '
+	buf := t.blankLine()
+	placeCentered(buf, t.layout.client, t.layout.labels.client)
+	placeCentered(buf, t.layout.prism, t.layout.labels.prism)
+	placeCentered(buf, t.layout.merchant, t.layout.labels.merchant)
+	if t.layout.hasWallet {
+		placeCentered(buf, t.layout.wallet, t.layout.labels.wallet)
 	}
-	placeCentered(buf, laneClient, laneLabels.client)
-	placeCentered(buf, laneMerchant, laneLabels.merchant)
-	placeCentered(buf, laneWallet, laneLabels.wallet)
 	return strings.TrimRight(string(buf), " ")
 }
 
-// laneBars draws the baseline row showing each lane as a vertical bar
-// without any message:
-//
-//	"             │              │                │"
+// laneBars draws the baseline row showing each active lane as a
+// vertical bar without any message.
 func (t *debugTracer) laneBars() string {
-	buf := make([]rune, lineWidth)
+	buf := t.blankLine()
+	buf[t.layout.client] = '│'
+	buf[t.layout.prism] = '│'
+	buf[t.layout.merchant] = '│'
+	if t.layout.hasWallet {
+		buf[t.layout.wallet] = '│'
+	}
+	return string(buf)
+}
+
+// blankLine returns a width-sized buffer of spaces ready to overlay.
+// Centralised so every primitive matches t.layout.width exactly.
+func (t *debugTracer) blankLine() []rune {
+	buf := make([]rune, t.layout.width)
 	for i := range buf {
 		buf[i] = ' '
 	}
-	buf[laneClient] = '│'
-	buf[laneMerchant] = '│'
-	buf[laneWallet] = '│'
-	return string(buf)
+	return buf
+}
+
+// laneCols returns the column positions of all active lanes, so the
+// arrow drawers can re-paint lane bars they crossed.
+func (t *debugTracer) laneCols() []int {
+	if t.layout.hasWallet {
+		return []int{t.layout.client, t.layout.prism, t.layout.merchant, t.layout.wallet}
+	}
+	return []int{t.layout.client, t.layout.prism, t.layout.merchant}
 }
 
 // laneBarsWithNote draws the baseline row + a side note past the last lane.
@@ -376,30 +468,24 @@ func appendNote(line, note string) string {
 	return line + "    " + note
 }
 
-// arrowRight draws an arrow from lane at fromCol to lane at toCol,
-// where fromCol < toCol. label sits in the middle of the arrow.
-// stepNum > 0 puts "  N. " at the line start; pass 0 to skip the step prefix.
-// note (if non-empty) appears past the final lane as a side annotation.
-//
-//	"  1.        │── GET ──────►│                │     93ms"
+// arrowRight draws a solid arrow from fromCol → toCol (fromCol < toCol)
+// with label centred over the dashes. stepNum > 0 stamps "  N. " at
+// the line start; pass 0 to skip. note (non-empty) appears past the
+// last lane as a side annotation.
 func (t *debugTracer) arrowRight(stepNum, fromCol, toCol int, label, note string) string {
-	buf := make([]rune, lineWidth)
-	for i := range buf {
-		buf[i] = ' '
+	buf := t.blankLine()
+	// All active lane bars first, then we overwrite with the arrow.
+	for _, c := range t.laneCols() {
+		buf[c] = '│'
 	}
-	// All three lane bars first, then we overwrite with the arrow.
-	buf[laneClient] = '│'
-	buf[laneMerchant] = '│'
-	buf[laneWallet] = '│'
 	if stepNum > 0 {
 		stepLabel := fmt.Sprintf("  %d.", stepNum)
 		for i, r := range stepLabel {
-			if i < lineWidth {
+			if i < len(buf) {
 				buf[i] = r
 			}
 		}
 	}
-	// Fill the segment between fromCol and toCol with the arrow.
 	for i := fromCol + 1; i < toCol; i++ {
 		buf[i] = '─'
 	}
@@ -410,23 +496,17 @@ func (t *debugTracer) arrowRight(stepNum, fromCol, toCol int, label, note string
 	return appendNote(string(buf), note)
 }
 
-// arrowLeft draws an arrow from the right lane (toCol) BACK to the
-// left lane (fromCol) — i.e. response direction. fromCol < toCol.
-// stepNum=0 always (responses don't carry a step number).
-//
-//	"             │◄── 402 ──────│                │"
+// arrowLeft draws a solid arrow from the right lane (toCol) BACK to
+// the left lane (fromCol) — response direction. stepNum=0 always.
 func (t *debugTracer) arrowLeft(stepNum, fromCol, toCol int, label, note string) string {
-	buf := make([]rune, lineWidth)
-	for i := range buf {
-		buf[i] = ' '
+	buf := t.blankLine()
+	for _, c := range t.laneCols() {
+		buf[c] = '│'
 	}
-	buf[laneClient] = '│'
-	buf[laneMerchant] = '│'
-	buf[laneWallet] = '│'
 	if stepNum > 0 {
 		stepLabel := fmt.Sprintf("  %d.", stepNum)
 		for i, r := range stepLabel {
-			if i < lineWidth {
+			if i < len(buf) {
 				buf[i] = r
 			}
 		}
@@ -439,6 +519,79 @@ func (t *debugTracer) arrowLeft(stepNum, fromCol, toCol int, label, note string)
 	buf[fromCol] = '│'
 	buf[toCol] = '│'
 	return appendNote(string(buf), note)
+}
+
+// arrowRightDotted is the same shape as arrowRight but uses spaced
+// dashes ("─ ─ ─►") to mark a hop paycli doesn't directly observe —
+// specifically the prism → merchant proxy step. Always emits with no
+// step prefix, no side note: the surrounding solid arrows own those.
+func (t *debugTracer) arrowRightDotted(fromCol, toCol int, label string) string {
+	buf := t.blankLine()
+	for _, c := range t.laneCols() {
+		buf[c] = '│'
+	}
+	// Paint dash-on-even, space-on-odd inside the arrow span so the
+	// glyph reads as dashed against the surrounding solid bars.
+	for i := fromCol + 1; i < toCol; i++ {
+		if (i-fromCol)%2 == 1 {
+			buf[i] = '─'
+		}
+	}
+	buf[toCol-1] = '►'
+	placeOverlay(buf, fromCol+1, toCol-2, " "+label+" ")
+	buf[fromCol] = '│'
+	buf[toCol] = '│'
+	return string(buf)
+}
+
+// arrowLeftDotted mirrors arrowRightDotted for the reverse hop.
+func (t *debugTracer) arrowLeftDotted(fromCol, toCol int, label string) string {
+	buf := t.blankLine()
+	for _, c := range t.laneCols() {
+		buf[c] = '│'
+	}
+	for i := fromCol + 1; i < toCol; i++ {
+		if (i-fromCol)%2 == 1 {
+			buf[i] = '─'
+		}
+	}
+	buf[fromCol+1] = '◄'
+	placeOverlay(buf, fromCol+2, toCol-1, " "+label+" ")
+	buf[fromCol] = '│'
+	buf[toCol] = '│'
+	return string(buf)
+}
+
+// selfNote prints a "self-loop" line — used in node mode for the
+// payment step, where the wallet is the same node that's making the
+// request so no cross-lane arrow makes sense. Renders as
+//
+//	"  2.        │  ↻ paid via local lnd · 0.01 SUI"
+//
+// keeping the lane bars intact for the other lanes so the diagram
+// stays grid-aligned.
+func (t *debugTracer) selfNote(stepNum, col int, note string) string {
+	buf := t.blankLine()
+	for _, c := range t.laneCols() {
+		buf[c] = '│'
+	}
+	if stepNum > 0 {
+		stepLabel := fmt.Sprintf("  %d.", stepNum)
+		for i, r := range stepLabel {
+			if i < len(buf) {
+				buf[i] = r
+			}
+		}
+	}
+	// Write the note immediately to the right of the lane bar.
+	start := col + 2
+	for i, r := range note {
+		p := start + i
+		if p < len(buf) {
+			buf[p] = r
+		}
+	}
+	return string(buf)
 }
 
 // placeCentered writes s centered around the given column.

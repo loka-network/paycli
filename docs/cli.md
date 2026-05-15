@@ -542,51 +542,89 @@ Notes:
 
 #### `--debug`: visualize the L402 exchange
 
-`--debug` instruments the doer so every step of the L402 conversation
-prints to **stderr** (response body keeps going to stdout — pipes stay
-clean). Useful while learning the protocol or troubleshooting a stuck
-payment.
+`--debug` renders the full L402 round-trip as a sequence diagram on
+**stderr** (response body keeps going to stdout — pipes stay clean).
+Time flows top to bottom; each lane is one party and each arrow is one
+message. The lane set adapts to your custody route — `hosted` has a
+fourth lane for the remote wallet, `node` collapses that into "you"
+since the lnd IS the wallet. **Prism is always the gateway in front of
+the merchant**, so its lane appears in both modes.
+
+**Hosted route** (custodial wallet at `agents-pay-service`):
 
 ```
-$ lokapay request --debug -H "Host: service1.com" --insecure-target \
-      https://127.0.0.1:8080/freebieservice
-── L402 debug trace ─────────────────────────────────────────────
-  target:  https://127.0.0.1:8080/freebieservice
-  wallet:  hosted route (sub-wallet "default")
+$ lokapay request --debug -H "Host: service1.com" --insecure-target -i \
+      https://127.0.0.1:8080/data.json
+─── L402 payment ──────────────────────────────────────────────
+  Resource: https://127.0.0.1:8080/data.json
+  Wallet:   hosted route (sub-wallet "default" on agents-pay-service)
 
-[1] → GET https://127.0.0.1:8080/freebieservice
-      Host: service1.com
-[1] ← HTTP 402 Payment Required  (38ms)
-      WWW-Authenticate: LSAT macaroon="AgEEbHNhdAJCAACptfkyc1B…", invoice="lnbcrt100m1p5l6n33pp54x6ljvnn2py0…"
-      Content-Type: text/plain; charset=utf-8
-
-  $ paying invoice via hosted route (sub-wallet "default")
-      invoice:      lnbcrt100m1p5l6n33pp54x6ljvnn2py0…
-      macaroon:     AgEEbHNhdAJCAACptfkyc1BI8CJRzhuDO5T…
-      payment_hash: 54x6ljvnn2py0qgj3ecdcxwu57vp54c0dy7ekfwpe04sdmxks9ju
-      preimage:     dbba4231c7c87818f05c23f0ecd799f4… ✓ revealed
-      status:       success
-      amount:       100000000 msat
-
-[2] → GET https://127.0.0.1:8080/freebieservice
-      Host: service1.com
-      Authorization: LSAT AgEEbHNhdAJCAACptfkyc1B…:dbba4231c7c87818f05c23f0ecd799f44739b4e5b455be6a45fe25a0b04b3b2b
-[2] ← HTTP 200 OK  (52ms)
-      Content-Type: application/json
-      Content-Length: 235
-
-─────────────────────────────────────────────────────────────────
-  ✓ L402 cycle complete — 2 HTTP round-trip(s)
-
-{"status":"paid","message":"…"}
+        you         prism        merchant       wallet
+         │            │             │             │
+  1.     │── GET ────►│             │             │
+         │            │─ ─ forward ►│             │
+         │            │◄ ─ ─ 402 ─ ─│             │
+         │◄── 402 ────│             │             │   needs payment · 89ms
+         │            │             │             │
+  2.     │── pay invoice ────────────────────────►│
+         │◄── preimage ───────────────────────────│   0.01 SUI
+         │            │             │             │   receipt: dbba4231c7c8…
+         │            │             │             │
+  3.     │─ GET+LSAT ►│             │             │
+         │            │─ ─ forward ►│             │
+         │            │◄ ─ ─ 200 ─ ─│             │
+         │◄── 200 ────│             │             │   52ms
+──────────────────────────────────────────────────────────────
+  ✓ done in 487ms — 2 HTTP round-trip(s)
 ```
 
-What you're looking at: step [1] sends the unauthenticated request,
-the server replies with 402 + a fresh challenge. The `$ paying`
-block is the wallet round-trip — for hosted it's a POST to
-`agents-pay-service`, for node it's the lnd REST `payinvoice`. Once
-the preimage comes back, step [2] is the same request with the LSAT
-auth header, and the merchant returns 200.
+**Node route** (self-custody local lnd — no remote wallet lane):
+
+```
+$ lokapay request --debug -H "Host: service1.com" --insecure-target -i \
+      https://127.0.0.1:8080/data.json
+─── L402 payment ──────────────────────────────────────────────
+  Resource: https://127.0.0.1:8080/data.json
+  Wallet:   node route (local lnd — self-custody)
+
+      you (lnd)       prism        merchant
+         │              │             │
+  1.     │── GET ──────►│             │
+         │              │─ ─ forward ►│
+         │              │◄ ─ ─ 402 ─ ─│
+         │◄── 402 ──────│             │           needs payment · 89ms
+         │              │             │
+  2.     │  ↻ paid via local lnd · 0.01 SUI
+         │              │             │           receipt: dbba4231c7c8…
+         │              │             │
+  3.     │─ GET+LSAT ──►│             │
+         │              │─ ─ forward ►│
+         │              │◄ ─ ─ 200 ─ ─│
+         │◄── 200 ──────│             │           52ms
+──────────────────────────────────────────────────────────────
+  ✓ done in 410ms — 2 HTTP round-trip(s)
+```
+
+**Reading the diagram**
+
+* **Step 1** — unauthenticated `GET`. The solid arrows show what paycli
+  observes: a request to `prism` and a `402 Payment Required` back.
+  The dashed `forward` arrows hint at prism's internal proxy to the
+  L402-protected merchant backend — paycli never sees those hops
+  directly, they're shown to make prism's gateway role explicit.
+* **Step 2** — invoice settle.
+  * On **hosted**: a cross-lane arrow to the remote wallet
+    (`agents-pay-service` sub-wallet) settles the invoice over Lightning
+    and returns the preimage.
+  * On **node**: a self-loop annotation on the `you (lnd)` lane — your
+    own lnd settles the invoice, there's no remote counterparty.
+* **Step 3** — same request retried with the
+  `Authorization: LSAT macaroon:preimage` header. Prism validates,
+  forwards to merchant, and the protected response comes back.
+
+Side-notes (right of the diagram) carry the things that don't fit on
+the arrows themselves: response timing, the human-readable amount, and
+a truncated preimage receipt.
 
 ## Exit codes
 
