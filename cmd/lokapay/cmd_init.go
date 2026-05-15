@@ -220,10 +220,11 @@ func wizardNode(ctx context.Context, cfg *Config) error {
 // in loka-agentic-payment SKILL.md, gated by a few prompts so the user
 // confirms network + bootstrap actions.
 func wizardNodeGuided(ctx context.Context, cfg *Config) error {
-	network, doFaucet, doSeeds, err := promptNodeGuided()
+	choices, err := promptNodeGuided()
 	if err != nil {
 		return err
 	}
+	network := choices.Network
 
 	destRoot, err := lokapayLndRoot()
 	if err != nil {
@@ -240,9 +241,24 @@ func wizardNodeGuided(ctx context.Context, cfg *Config) error {
 		return fail("save config: %v", err)
 	}
 
-	pkgID, err := sdk.FetchSuiPackageID(ctx, network, res.Version)
-	if err != nil {
-		return fail("init: resolve package id: %v", err)
+	var pkgID string
+	if network == sdk.NetworkLocalnet {
+		// Localnet republishes the Move package on every `sui start --force-regenesis`,
+		// so there's no committed deploy_state_*.json to read from. Ask the user
+		// to paste the id printed by their own `sui client publish` (or by
+		// scripts/itest_sui_single_coin.sh's step 2.5).
+		if err := survey.AskOne(&survey.Input{
+			Message: "Sui Move package id (from `sui client publish` on this localnet):",
+			Help:    "e.g. 0xabc...; itest_sui_single_coin.sh prints this at step 2.5",
+		}, &pkgID, survey.WithValidator(survey.Required)); err != nil {
+			return fail("init: read package id: %v", err)
+		}
+		pkgID = strings.TrimSpace(pkgID)
+	} else {
+		pkgID, err = sdk.FetchSuiPackageID(ctx, network, res.Version)
+		if err != nil {
+			return fail("init: resolve package id: %v", err)
+		}
 	}
 	fmt.Fprintf(os.Stderr, "  sui %s package_id: %s\n", network, pkgID)
 
@@ -253,34 +269,46 @@ func wizardNodeGuided(ctx context.Context, cfg *Config) error {
 	if err := os.MkdirAll(lndDir, 0o700); err != nil {
 		return fail("mkdir %s: %v", lndDir, err)
 	}
+	ports := managedLndPortsFor(network)
 	if alreadyRunning(lndDir) {
 		fmt.Fprintf(os.Stderr, "ℹ lnd already running at %s — skipping spawn; will reuse\n", lndDir)
 	} else {
 		netCfg := sdk.SuiNetworkConfigs[network]
-		if err := spawnManagedLnd(ctx, cfg, lndDir, network, netCfg, pkgID, defaultManagedLndPorts, 30*time.Second); err != nil {
+		if err := spawnManagedLnd(ctx, cfg, lndDir, network, netCfg, pkgID, ports, 30*time.Second); err != nil {
 			return fail("init: spawn lnd: %v", err)
 		}
 	}
 
-	cfg.Node.Endpoint = "https://127.0.0.1:8081"
+	cfg.Node.Endpoint = fmt.Sprintf("https://127.0.0.1:%d", ports.REST)
 	cfg.Node.TLSCertPath = filepath.Join(lndDir, "tls.cert")
-	cfg.Node.MacaroonPath = filepath.Join(lndDir, "data", "chain", "sui", string(network), "admin.macaroon")
+	cfg.Node.MacaroonPath = filepath.Join(lndDir, "data", "chain", "sui", string(sdk.LndSuiNetworkFlag(network)), "admin.macaroon")
 	cfg.Node.LndDir = lndDir
 	cfg.Node.Network = string(network)
 	cfg.Node.PackageID = pkgID
+	cfg.Node.RPCPort = ports.RPC
 	cfg.Insecure = true
 	setPrismURLFromEndpoint(cfg, cfg.Node.Endpoint)
 	if err := saveConfig(cfg); err != nil {
 		return fail("save config: %v", err)
 	}
 
-	if doFaucet {
+	if choices.DoFaucet {
 		if err := fundWalletFromFaucet(ctx, cfg, sdk.SuiNetworkConfigs[network]); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: faucet bootstrap failed: %v\n", err)
 		}
 	}
-	if doSeeds {
-		connectSeeds(ctx, cfg)
+	var connected []string
+	if choices.DoConnectPeers {
+		connected = connectPeers(ctx, cfg, network)
+	}
+	if choices.DoOpenChannel && len(connected) > 0 {
+		// Best-effort: a failed openchannel is a warning, not a fatal init
+		// error. The node + peer connection are still useful and the user
+		// can retry with `lokapay node openchannel` later.
+		if err := openLocalnetChannel(ctx, cfg, network, choices.OpenChannelPeer, choices.OpenChannelAmt); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: open channel to %s failed: %v\n",
+				choices.OpenChannelPeer, err)
+		}
 	}
 
 	fmt.Fprintln(os.Stderr)
@@ -555,11 +583,29 @@ func promptNodeMode() (string, error) {
 	return choice, err
 }
 
-func promptNodeGuided() (sdk.SuiNetwork, bool, bool, error) {
+// nodeGuidedChoices captures every prompt answer from the node-mode wizard.
+// Returned by promptNodeGuided so wizardNodeGuided can stay readable.
+type nodeGuidedChoices struct {
+	Network         sdk.SuiNetwork
+	PackageID       string // only filled on localnet (user pastes it manually)
+	DoFaucet        bool
+	DoConnectPeers  bool
+	DoOpenChannel   bool   // localnet only
+	OpenChannelAmt  int64  // MIST sats, localnet only (default 5 SUI)
+	OpenChannelPeer string // "alice" or "bob" (localnet only)
+}
+
+func promptNodeGuided() (nodeGuidedChoices, error) {
+	var choices nodeGuidedChoices
+
 	netChoice := ""
 	if err := survey.AskOne(&survey.Select{
 		Message: "Sui chain:",
-		Options: []string{string(sdk.NetworkDevnet), string(sdk.NetworkTestnet)},
+		Options: []string{
+			string(sdk.NetworkDevnet),
+			string(sdk.NetworkTestnet),
+			string(sdk.NetworkLocalnet),
+		},
 		Default: string(sdk.NetworkDevnet),
 		Description: func(value string, _ int) string {
 			switch value {
@@ -567,27 +613,56 @@ func promptNodeGuided() (sdk.SuiNetwork, bool, bool, error) {
 				return "fastest reset cadence; daily resets, faucet available"
 			case string(sdk.NetworkTestnet):
 				return "longer-lived; faucet available; closer to mainnet semantics"
+			case string(sdk.NetworkLocalnet):
+				return "your own `sui start --with-faucet` on 127.0.0.1:9000; you supply the Move package id"
 			}
 			return ""
 		},
 	}, &netChoice); err != nil {
-		return "", false, false, err
+		return choices, err
 	}
-	doFaucet := false
+	choices.Network = sdk.SuiNetwork(netChoice)
+
 	if err := survey.AskOne(&survey.Confirm{
 		Message: "Request test SUI from the faucet after start?",
 		Default: true,
-	}, &doFaucet); err != nil {
-		return "", false, false, err
+	}, &choices.DoFaucet); err != nil {
+		return choices, err
 	}
-	doSeeds := false
+
+	// Per-network peer-connect prompt: SKILL seeds on the public chains,
+	// itest alice/bob on localnet.
+	var seedPrompt string
+	switch choices.Network {
+	case sdk.NetworkLocalnet:
+		seedPrompt = "Connect to itest alice + bob (from itest_sui_single_coin.sh) after start?"
+	default:
+		seedPrompt = "Connect to Loka EU + US seed nodes after start?"
+	}
 	if err := survey.AskOne(&survey.Confirm{
-		Message: "Connect to Loka EU + US seed nodes after start?",
+		Message: seedPrompt,
 		Default: true,
-	}, &doSeeds); err != nil {
-		return "", false, false, err
+	}, &choices.DoConnectPeers); err != nil {
+		return choices, err
 	}
-	return sdk.SuiNetwork(netChoice), doFaucet, doSeeds, nil
+
+	// Localnet-only: offer to also open a 5 SUI outbound channel so the
+	// fresh lnd has routing capacity immediately. Skipped for public
+	// chains — opening a channel there is a heavier decision (real
+	// timelocks, on-chain fees, manual peer selection) and lokapay
+	// already exposes `node openchannel` for that workflow.
+	if choices.Network == sdk.NetworkLocalnet && choices.DoConnectPeers {
+		if err := survey.AskOne(&survey.Confirm{
+			Message: "Also open a 5 SUI outbound channel to alice (for self-pay / L402 routing)?",
+			Default: true,
+		}, &choices.DoOpenChannel); err != nil {
+			return choices, err
+		}
+		choices.OpenChannelAmt = 5_000_000_000
+		choices.OpenChannelPeer = "alice"
+	}
+
+	return choices, nil
 }
 
 func promptNodeEndpoint(curEndpoint, curTLS, curMac string) (endpoint, tlsCert, macaroon string, insecure bool, err error) {

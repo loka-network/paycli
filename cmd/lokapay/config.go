@@ -116,8 +116,9 @@ type NodeConfig struct {
 	LncliBinaryPath string `json:"lncli_binary_path,omitempty"`
 	LndDir          string `json:"lnd_dir,omitempty"`            // --lnddir target (and where logs / PID live)
 	LndVersion      string `json:"lnd_version,omitempty"`        // e.g. "v0.21.0", for upgrade tracking
-	Network         string `json:"network,omitempty"`            // "devnet" | "testnet" | "mainnet"
+	Network         string `json:"network,omitempty"`            // "devnet" | "testnet" | "mainnet" | "localnet"
 	PackageID       string `json:"package_id,omitempty"`         // resolved at start time, cached so lokapay node status doesn't need network
+	RPCPort         int    `json:"rpc_port,omitempty"`           // lnd gRPC port; non-default on localnet to dodge itest alice
 }
 
 // ResolveWallet returns the wallet entry lokapay should use for a command.
