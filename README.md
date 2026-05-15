@@ -46,7 +46,9 @@ go install github.com/loka-network/paycli/cmd/lokapay@latest
 lokapay init                                       # one-shot interactive setup
 lokapay services                                   # browse Prism's service catalog
 lokapay node faucet                                # (devnet/testnet only) top up test SUI
-lokapay request -i --debug <merchant-url>          # pays the 402 challenge, returns the response
+
+# pays the 402 challenge, returns the response
+lokapay request -i --debug https://service1.prism.loka.cash/data.json
 ```
 
 The `<merchant-url>` is whatever URL the L402 service publishes — Prism
